@@ -48,6 +48,20 @@ function interpolationIsRejected(value: string) {
 void interpolationIsRejected;
 
 describe("YAML schema type inference", () => {
+  test("infers from a const string without an as const assertion", () => {
+    const source = `
+      _version: "1.0.0"
+      notes:
+        id: id
+        body: string
+    `;
+    type ConstDB = InferDatabase<typeof source>;
+    expectTypeOf<Selectable<ConstDB["notes"]>>().toEqualTypeOf<{
+      id: string;
+      body: string;
+    }>();
+  });
+
   test("infers Kysely select, insert, and update types", () => {
     expectTypeOf<Post["id"]>().toEqualTypeOf<string>();
     expectTypeOf<Post["author_id"]>().toEqualTypeOf<string>();

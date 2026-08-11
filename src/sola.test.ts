@@ -161,6 +161,29 @@ describe("Kysola", () => {
     expect(second.data[0]!.id).not.toBe(first.data[0]!.id);
   });
 
+  test("round-trips Unicode cursor values", async () => {
+    const local = fixture();
+    const author = await local.query.author.create({
+      data: { name: "Author", email: "author@example.com" },
+    });
+    await local.query.post.createMany({
+      data: [
+        { title: "日本語", body: null, authorId: author.id },
+        { title: "🦊 fox", body: null, authorId: author.id },
+      ],
+    });
+
+    const first = await local.query.post.paginate({ orderBy: [{ title: "asc" }], take: 1 });
+    const second = await local.query.post.paginate({
+      orderBy: [{ title: "asc" }],
+      take: 1,
+      after: first.pagination.endCursor!,
+    });
+    expect(second.data).toHaveLength(1);
+    expect(second.data[0]!.title).not.toBe(first.data[0]!.title);
+    await local.db.destroy();
+  });
+
   test("rejects malformed cursors", async () => {
     expect(
       setup.query.post.paginate({ orderBy: [{ id: "asc" }], take: 2, after: "bad" }),
