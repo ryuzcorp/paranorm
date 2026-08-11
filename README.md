@@ -1,4 +1,4 @@
-# Kysola
+# ParanORM
 
 Kysely on steroids: author database schemas in YAML, infer Kysely types, apply schema-diff
 migrations, and query through a compact model API.
@@ -6,7 +6,7 @@ migrations, and query through a compact model API.
 ## Install
 
 ```bash
-npm i kysola kysely
+npm i paranorm kysely
 ```
 
 ## Quick start
@@ -15,7 +15,7 @@ Keep the YAML as a literal so TypeScript can infer its database type:
 
 ```ts
 import { Kysely } from "kysely";
-import { createKysola, defineSchema, type InferSchema } from "kysola";
+import { createParanORM, defineSchema, type InferSchema } from "paranorm";
 
 const schema = defineSchema(`
   _version: "1.0.0"
@@ -35,9 +35,9 @@ const schema = defineSchema(`
 type DB = InferSchema<typeof schema>;
 
 const db = new Kysely<DB>({ dialect });
-const kysola = createKysola(db);
+const paranorm = createParanORM(db);
 
-const posts = await kysola.posts.findMany({
+const posts = await paranorm.posts.findMany({
   where: {
     status: "published",
     OR: [{ title: { contains: "Kysely" } }, { title: { startsWith: "SQL" } }],
@@ -48,7 +48,7 @@ const posts = await kysola.posts.findMany({
 });
 ```
 
-`createKysola` accepts only `Kysely<DB>`. Models are created lazily through a proxy, while
+`createParanORM` accepts only `Kysely<DB>`. Models are created lazily through a proxy, while
 table names, columns, rows, filters, and operators are inferred from the Kysely database
 type. No table list, schema object, or relation metadata is passed to the query wrapper.
 
@@ -57,25 +57,25 @@ type. No table list, schema object, or relation metadata is passed to the query 
 Every inferred table exposes:
 
 ```ts
-kysola.users.findMany(args?)
-kysola.users.findFirst(args?)
-kysola.users.findUnique({ where })
-kysola.users.create({ data })
-kysola.users.createMany({ data })
-kysola.users.update({ where, data })
-kysola.users.updateMany({ where, data })
-kysola.users.delete({ where })
-kysola.users.deleteMany({ where })
-kysola.users.upsert({ where, create, update })
-kysola.users.count({ where }?)
-kysola.users.exists({ where }?)
-kysola.users.paginate(args)
+paranorm.users.findMany(args?)
+paranorm.users.findFirst(args?)
+paranorm.users.findUnique({ where })
+paranorm.users.create({ data })
+paranorm.users.createMany({ data })
+paranorm.users.update({ where, data })
+paranorm.users.updateMany({ where, data })
+paranorm.users.delete({ where })
+paranorm.users.deleteMany({ where })
+paranorm.users.upsert({ where, create, update })
+paranorm.users.count({ where }?)
+paranorm.users.exists({ where }?)
+paranorm.users.paginate(args)
 ```
 
 Selections return projected types instead of the full row:
 
 ```ts
-const users = await kysola.users.findMany({
+const users = await paranorm.users.findMany({
   select: { id: true, email: true },
 });
 // Array<{ id: string; email: string }>
@@ -89,7 +89,7 @@ the affected row; `updateMany` and `deleteMany` return affected counts.
 Fields accept direct equality values or type-specific operators:
 
 ```ts
-await kysola.users.findMany({
+await paranorm.users.findMany({
   where: {
     email: { endsWith: "@example.com" },
     name: { notIn: ["Bot", "Deleted"] },
@@ -115,7 +115,7 @@ LIKE wildcards in user values are escaped automatically.
 Offset pagination:
 
 ```ts
-const page = await kysola.posts.paginate({
+const page = await paranorm.posts.paginate({
   orderBy: [{ id: "asc" }],
   take: 20,
   skip: 40,
@@ -125,12 +125,12 @@ const page = await kysola.posts.paginate({
 Cursor pagination:
 
 ```ts
-const first = await kysola.posts.paginate({
+const first = await paranorm.posts.paginate({
   orderBy: [{ published_at: "desc" }, { id: "asc" }],
   take: 20,
 });
 
-const next = await kysola.posts.paginate({
+const next = await paranorm.posts.paginate({
   orderBy: [{ published_at: "desc" }, { id: "asc" }],
   take: 20,
   after: first.pagination.endCursor!,
@@ -144,7 +144,7 @@ The result includes `count`, `hasNext`, `hasPrevious`, `startCursor`, and `endCu
 Use either API:
 
 ```ts
-import { defineSchema, type InferDatabase, type InferSchema } from "kysola";
+import { defineSchema, type InferDatabase, type InferSchema } from "paranorm";
 
 const schema = defineSchema(yamlLiteral);
 type DB = InferSchema<typeof schema>;
@@ -169,7 +169,7 @@ For IDE extensions that highlight tagged templates, use the exported `schema` ta
 or alias it to `yaml`:
 
 ```ts
-import { schema as yaml } from "kysola";
+import { schema as yaml } from "paranorm";
 
 function loadSchema() {
   return yaml`
@@ -184,7 +184,8 @@ function loadSchema() {
 The tag uses [`dedent`](https://github.com/dmnd/dedent), so surrounding code indentation is
 removed automatically. Interpolations are rejected so the template always contains one complete schema document.
 TypeScript does not expose tagged-template contents as a string-literal type, so use
-`defineSchema(yamlLiteral as const)` when `InferSchema` compile-time inference is needed.
+`defineSchema(yamlLiteral)` when `InferSchema` compile-time inference is needed. A `const`
+string retains its literal type without an `as const` assertion.
 
 TypeScript can only infer a string known at compile time. A schema loaded with
 `Bun.file(...).text()` is a runtime `string` and requires generated declarations instead.
@@ -198,7 +199,7 @@ See [SPEC.md](./SPEC.md) for the complete authoring format.
 schema's `_version`:
 
 ```ts
-import { createMigrator, defineSchema } from "kysola";
+import { createMigrator, defineSchema } from "paranorm";
 
 const v1 = defineSchema(`_version: "1.0.0"\nusers:\n  id: id\n`);
 const v2 = defineSchema(`_version: "2.0.0"\nusers:\n  id: id\n  email: string?\n`);
@@ -223,8 +224,8 @@ const migrator = createMigrator(db, [v1, v2], {
   dialect: "postgres",
   allowDestructive: false,
   allowUnorderedMigrations: false,
-  migrationTableName: "kysola_migration",
-  migrationLockTableName: "kysola_migration_lock",
+  migrationTableName: "paranorm_migration",
+  migrationLockTableName: "paranorm_migration_lock",
 });
 ```
 
@@ -236,7 +237,3 @@ still apply.
 
 Schema errors include source locations when parsing strings. Named migration sources are
 reported as `name:line:column`.
-
-## Compatibility
-
-`createSola` and the `Sola` type are aliases retained for users of the original API.

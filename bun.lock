@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "kysola",
+      "name": "paranorm",
       "dependencies": {
         "confbox": "^0.2.4",
         "dedent": "^1.7.2",

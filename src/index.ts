@@ -1,17 +1,16 @@
-export { createKysola, createSola, KysolaError } from "./sola.ts";
+export { createParanORM, ParanORMError } from "./paranorm.ts";
 export type {
   FindArgs,
-  Kysola,
-  KysolaModel,
+  ParanORM,
+  ParanORMModel,
   OrderByClause,
   PaginateArgs,
   PaginationMeta,
   PaginationResult,
   SelectClause,
   SelectedResult,
-  Sola,
   WhereClause,
-} from "./sola.ts";
+} from "./paranorm.ts";
 export { defineSchema, schema } from "./infer.ts";
 export type { InferDatabase, InferSchema, JSONValue, TaggedSchema, TypedSchema } from "./infer.ts";
 export { builtinMacros, parseColumn, parseSchema, SchemaValidationError } from "./parser.ts";
@@ -24,7 +23,7 @@ export {
 } from "./migration-provider.ts";
 export type {
   CreateMigratorOptions,
-  KysolaMigrator,
+  ParanORMMigrator,
   MigrationDialect,
   MigrationPlanOperation,
   MigrationSqlPreview,

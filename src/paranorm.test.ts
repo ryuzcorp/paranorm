@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, expectTypeOf, test } from "bun:test";
 
 import { type Generated, Kysely, SqliteDialect } from "kysely";
 
-import { createKysola, KysolaError } from "./index.ts";
+import { createParanORM, ParanORMError } from "./index.ts";
 
 interface DB {
   author: { id: Generated<number>; name: string; email: string };
@@ -36,11 +36,11 @@ function fixture() {
     typeof SqliteDialect
   >[0];
   const db = new Kysely<DB>({ dialect: new SqliteDialect(dialectConfig) });
-  const query = createKysola(db);
+  const query = createParanORM(db);
   return { db, query };
 }
 
-describe("Kysola", () => {
+describe("ParanORM", () => {
   let setup: ReturnType<typeof fixture>;
   let aliceId: number;
   let firstPostId: number;
@@ -146,7 +146,7 @@ describe("Kysola", () => {
   test("findUnique throws a typed error", async () => {
     expect(
       setup.query.author.findUnique({ where: { email: "missing@example.com" } }),
-    ).rejects.toBeInstanceOf(KysolaError);
+    ).rejects.toBeInstanceOf(ParanORMError);
   });
 
   test("supports offset and cursor pagination", async () => {

@@ -1,22 +1,22 @@
-# Kysola Specification
+# ParanORM Specification
 
 ## 1. Purpose
 
-Kysola is a Kysely-focused toolkit with three connected surfaces:
+ParanORM is a Kysely-focused toolkit with three connected surfaces:
 
 1. A YAML authoring format for immutable database schema versions.
 2. A typed model API created directly from `Kysely<DB>`.
 3. A schema-diff `MigrationProvider` and sugar around Kysely's native `Migrator`.
 
-Kysola is not a replacement for Kysely. The Kysely database type remains authoritative,
-raw Kysely queries remain available, and Kysola's migrator preserves Kysely's locking,
+ParanORM is not a replacement for Kysely. The Kysely database type remains authoritative,
+raw Kysely queries remain available, and ParanORM's migrator preserves Kysely's locking,
 history tables, methods, and result types.
 
 ## 2. Canonical usage
 
 ```ts
 import { Kysely } from "kysely";
-import { createKysola, createMigrator, defineSchema, type InferSchema } from "kysola";
+import { createParanORM, createMigrator, defineSchema, type InferSchema } from "paranorm";
 
 const schemaV1 = defineSchema(`
   _version: "1.0.0"
@@ -29,7 +29,7 @@ const schemaV1 = defineSchema(`
 type DB = InferSchema<typeof schemaV1>;
 
 const db = new Kysely<DB>({ dialect });
-const kysola = createKysola(db);
+const paranorm = createParanORM(db);
 const migrator = createMigrator(db, [schemaV1], { dialect: "postgres" });
 ```
 
@@ -174,7 +174,7 @@ _relation_name: has_many=target
 Access policies support `public`, `authenticated`, and `owner` for `list`, `create`,
 `update`, and `delete`. Owner policies require an existing `owner_column`.
 
-These blocks are schema metadata. The current DB-only `createKysola(db)` model API does
+These blocks are schema metadata. The current DB-only `createParanORM(db)` model API does
 not load relation or access metadata at runtime.
 
 ## 7. Type inference
@@ -192,15 +192,15 @@ enums, auth, files, and Kysely's `Selectable`, `Insertable`, and `Updateable` be
 
 The `schema` tagged template is a dedented runtime authoring helper and may be aliased to
 `yaml`. TypeScript does not expose tagged-template static segments as literal tuple types,
-so `InferSchema` inference requires `defineSchema(... as const)`.
+so `InferSchema` inference requires `defineSchema(...)` with a literal or `const` string.
 
 ## 8. Query model API
 
 ```ts
-const kysola = createKysola(db);
+const paranorm = createParanORM(db);
 ```
 
-`createKysola` accepts only `Kysely<DB>`. A lazy proxy creates one model per accessed table.
+`createParanORM` accepts only `Kysely<DB>`. A lazy proxy creates one model per accessed table.
 
 Each model provides:
 
@@ -214,14 +214,14 @@ Each model provides:
 Selections produce projected result types:
 
 ```ts
-const rows = await kysola.users.findMany({
+const rows = await paranorm.users.findMany({
   select: { id: true, email: true },
 });
 // Array<{ id: string; email: string }>
 ```
 
 Writes use Kysely's `Insertable<Table>` and `Updateable<Table>` types. Single-row writes
-return the affected row or throw `KysolaError("NOT_FOUND")`. Mutation returning and upsert
+return the affected row or throw `ParanORMError("NOT_FOUND")`. Mutation returning and upsert
 support remain subject to the configured SQL dialect.
 
 Filters support direct equality, `AND`/`OR`/`NOT`, string matching, comparisons, sets, and
@@ -296,12 +296,12 @@ Allow typed reusable `where`, selection, and ordering fragments that can be shar
 
 ### 8. Transaction ergonomics
 
-Document and test `createKysola(trx)` with Kysely transactions, and add an optional helper
-that scopes a Kysola instance to a transaction callback.
+Document and test `createParanORM(trx)` with Kysely transactions, and add an optional helper
+that scopes a ParanORM instance to a transaction callback.
 
 ### 9. CLI tooling
 
-Add `kysola schema check`, `schema format`, `schema diff`, `migrate status`, `migrate sql`,
+Add `paranorm schema check`, `schema format`, `schema diff`, `migrate status`, `migrate sql`,
 and `migrate latest` commands with machine-readable output.
 
 ### 10. Generated declarations and YAML imports

@@ -81,19 +81,19 @@ export interface PaginationResult<T> {
   data: T[];
   pagination: PaginationMeta;
 }
-export class KysolaError extends Error {
+export class ParanORMError extends Error {
   constructor(
     readonly code: "BAD_REQUEST" | "NOT_FOUND",
     message: string,
     options?: ErrorOptions,
   ) {
     super(message, options);
-    this.name = "KysolaError";
+    this.name = "ParanORMError";
   }
 }
 
 type UniqueWhere<T> = { [K in keyof T]?: T[K] };
-export interface KysolaModel<Table> {
+export interface ParanORMModel<Table> {
   findMany<const Args extends FindArgs<Selectable<Table>> | undefined = undefined>(
     args?: Args,
   ): Promise<SelectedResult<Selectable<Table>, Args>[]>;
@@ -124,9 +124,7 @@ export interface KysolaModel<Table> {
     args: Args,
   ): Promise<PaginationResult<SelectedResult<Selectable<Table>, Args>>>;
 }
-export type Kysola<TDB> = { [K in keyof TDB]: KysolaModel<TDB[K]> };
-/** Backwards-compatible name used by the original implementation. */
-export type Sola<TDB> = Kysola<TDB>;
+export type ParanORM<TDB> = { [K in keyof TDB]: ParanORMModel<TDB[K]> };
 
 function escapeLike(value: unknown): string {
   return String(value).replace(/[\\%_]/g, (character) => `\\${character}`);
@@ -247,7 +245,7 @@ function decodeCursor(cursor: string): Record<string, any> {
     const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
     return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   } catch (cause) {
-    throw new KysolaError("BAD_REQUEST", "Invalid pagination cursor", {
+    throw new ParanORMError("BAD_REQUEST", "Invalid pagination cursor", {
       cause,
     });
   }
@@ -274,7 +272,7 @@ function applyCursorWhere(
   );
 }
 
-function createModel<Table>(db: Kysely<any>, tableName: string): KysolaModel<Table> {
+function createModel<Table>(db: Kysely<any>, tableName: string): ParanORMModel<Table> {
   type Row = Selectable<Table>;
   function selectedColumns(select?: SelectClause<Row>): string[] {
     return select
@@ -306,7 +304,7 @@ function createModel<Table>(db: Kysely<any>, tableName: string): KysolaModel<Tab
   }
   async function oneMutation(query: any): Promise<Row> {
     const row = await query.returningAll().executeTakeFirst();
-    if (row == null) throw new KysolaError("NOT_FOUND", `${tableName}: record not found`);
+    if (row == null) throw new ParanORMError("NOT_FOUND", `${tableName}: record not found`);
     return row as Row;
   }
   const model = {
@@ -316,7 +314,7 @@ function createModel<Table>(db: Kysely<any>, tableName: string): KysolaModel<Tab
       let query: any = db.selectFrom(tableName).selectAll();
       query = applyWhere(query, where as Record<string, any>);
       const row = await query.executeTakeFirst();
-      if (row == null) throw new KysolaError("NOT_FOUND", `${tableName}: record not found`);
+      if (row == null) throw new ParanORMError("NOT_FOUND", `${tableName}: record not found`);
       return row as Row;
     },
     create: ({ data }: { data: Insertable<Table> }) =>
@@ -360,7 +358,7 @@ function createModel<Table>(db: Kysely<any>, tableName: string): KysolaModel<Tab
     }) => {
       const columns = Object.keys(where);
       if (!columns.length)
-        throw new KysolaError("BAD_REQUEST", `${tableName}.upsert requires a conflict key`);
+        throw new ParanORMError("BAD_REQUEST", `${tableName}.upsert requires a conflict key`);
       const query = db
         .insertInto(tableName)
         .values(create as any)
@@ -436,10 +434,10 @@ function createModel<Table>(db: Kysely<any>, tableName: string): KysolaModel<Tab
       };
     },
   };
-  return model as KysolaModel<Table>;
+  return model as ParanORMModel<Table>;
 }
 
-export function createKysola<TDB>(db: Kysely<TDB>): Kysola<TDB> {
+export function createParanORM<TDB>(db: Kysely<TDB>): ParanORM<TDB> {
   const models: Record<string, unknown> = {};
   const model = (tableName: string) => {
     models[tableName] ??= createModel(db as Kysely<any>, tableName);
@@ -454,8 +452,5 @@ export function createKysola<TDB>(db: Kysely<TDB>): Kysola<TDB> {
       if (property === "then" && !(property in target)) return undefined;
       return model(property);
     },
-  }) as Kysola<TDB>;
+  }) as ParanORM<TDB>;
 }
-
-/** Backwards-compatible alias. */
-export const createSola = createKysola;

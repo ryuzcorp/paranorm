@@ -193,8 +193,8 @@ describe("schema migrations", () => {
     );
     const { db, sqlite } = migrationDatabase();
     const migrator = createMigrator(db, [first, second], {
-      migrationTableName: "kysola_migration",
-      migrationLockTableName: "kysola_migration_lock",
+      migrationTableName: "paranorm_migration",
+      migrationLockTableName: "paranorm_migration_lock",
     });
 
     const plan = await migrator.plan();

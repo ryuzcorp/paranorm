@@ -69,7 +69,7 @@ export interface MigrationSqlPreview extends SchemaMigrationPlan {
   statements: Array<{ sql: string; parameters: readonly unknown[] }>;
 }
 
-export type KysolaMigrator = Migrator & {
+export type ParanORMMigrator = Migrator & {
   plan(): Promise<SchemaMigrationPlan[]>;
   validate(): Promise<SchemaMigrationPlan[]>;
   sql(): Promise<MigrationSqlPreview[]>;
@@ -96,7 +96,7 @@ export function createMigrator(
   db: Kysely<any>,
   schemas: readonly SchemaMigrationInput[],
   options: CreateMigratorOptions = {},
-): KysolaMigrator {
+): ParanORMMigrator {
   const { allowDestructive, macros, dialect, cuidDefaultSql, uuidDefaultSql, ...migratorOptions } =
     options;
   const provider = new SchemaMigrationProvider({
