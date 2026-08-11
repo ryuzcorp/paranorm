@@ -26,7 +26,7 @@ const yaml = `
     score: decimal(10,2)?
     metadata: json?
     published_at: timestamp?
-` as const;
+`;
 
 type DB = InferDatabase<typeof yaml>;
 type Post = Selectable<DB["posts"]>;

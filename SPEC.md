@@ -18,15 +18,13 @@ history tables, methods, and result types.
 import { Kysely } from "kysely";
 import { createKysola, createMigrator, defineSchema, type InferSchema } from "kysola";
 
-const schemaV1 = defineSchema(
-  `
+const schemaV1 = defineSchema(`
   _version: "1.0.0"
   users:
     id: id(bigint)
     email: string unique
     name: string
-` as const,
-);
+`);
 
 type DB = InferSchema<typeof schemaV1>;
 

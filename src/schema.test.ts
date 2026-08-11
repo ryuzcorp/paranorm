@@ -163,7 +163,7 @@ describe("schema migrations", () => {
 
   test("renders dialect-aware migration SQL", async () => {
     const authored = defineSchema(
-      `_version: "1.0.0"\nrecords:\n  id: id(bigint)\n  payload: json\n  bytes: binary\n` as const,
+      `_version: "1.0.0"\nrecords:\n  id: id(bigint)\n  payload: json\n  bytes: binary\n`,
     );
     const sqliteSetup = migrationDatabase();
     const sqliteSql = await createMigrator(sqliteSetup.db, [authored], { dialect: "sqlite" }).sql();
@@ -186,10 +186,10 @@ describe("schema migrations", () => {
 
   test("creates Kysely Migrator with schema sugar", async () => {
     const first = defineSchema(
-      `_version: "1.0.0"\npeople:\n  id: id(varchar(64))\n  name: string\n` as const,
+      `_version: "1.0.0"\npeople:\n  id: id(varchar(64))\n  name: string\n`,
     );
     const second = defineSchema(
-      `_version: "2.0.0"\npeople:\n  id: id(varchar(64))\n  name: string\n  email: string? index\n` as const,
+      `_version: "2.0.0"\npeople:\n  id: id(varchar(64))\n  name: string\n  email: string? index\n`,
     );
     const { db, sqlite } = migrationDatabase();
     const migrator = createMigrator(db, [first, second], {

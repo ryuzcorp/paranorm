@@ -17,22 +17,20 @@ Keep the YAML as a literal so TypeScript can infer its database type:
 import { Kysely } from "kysely";
 import { createKysola, defineSchema, type InferSchema } from "kysola";
 
-const schema = defineSchema(
-  `
-_version: "1.0.0"
-users:
-  id: id(bigint)
-  email: string unique
-  name: string
-  created_at: timestamp default=now
-posts:
-  id: id(bigint)
-  user_id: references=users.id on_delete=cascade index
-  title: string
-  status: string enum=[draft,published] default="draft"
-  published_at: timestamp?
-` as const,
-);
+const schema = defineSchema(`
+  _version: "1.0.0"
+  users:
+    id: id(bigint)
+    email: string unique
+    name: string
+    created_at: timestamp default=now
+  posts:
+    id: id(bigint)
+    user_id: references=users.id on_delete=cascade index
+    title: string
+    status: string enum=[draft,published] default="draft"
+    published_at: timestamp?
+`);
 
 type DB = InferSchema<typeof schema>;
 
@@ -202,8 +200,8 @@ schema's `_version`:
 ```ts
 import { createMigrator, defineSchema } from "kysola";
 
-const v1 = defineSchema(`_version: "1.0.0"\nusers:\n  id: id\n` as const);
-const v2 = defineSchema(`_version: "2.0.0"\nusers:\n  id: id\n  email: string?\n` as const);
+const v1 = defineSchema(`_version: "1.0.0"\nusers:\n  id: id\n`);
+const v2 = defineSchema(`_version: "2.0.0"\nusers:\n  id: id\n  email: string?\n`);
 
 const migrator = createMigrator(db, [v1, v2]);
 
