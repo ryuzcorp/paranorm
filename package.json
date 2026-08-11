@@ -1,6 +1,6 @@
 {
   "name": "paranorm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "YAML schema inference, migrations, and a typed model API for Kysely.",
   "keywords": [
     "database",
