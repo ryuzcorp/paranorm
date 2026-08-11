@@ -16,7 +16,7 @@ history tables, methods, and result types.
 
 ```ts
 import { Kysely } from "kysely";
-import { createParanORM, createMigrator, defineSchema, type InferSchema } from "paranorm";
+import { paranorm, createMigrator, defineSchema, type InferSchema } from "paranorm";
 
 const schemaV1 = defineSchema(`
   _version: "1.0.0"
@@ -29,7 +29,7 @@ const schemaV1 = defineSchema(`
 type DB = InferSchema<typeof schemaV1>;
 
 const db = new Kysely<DB>({ dialect });
-const paranorm = createParanORM(db);
+const orm = paranorm(db);
 const migrator = createMigrator(db, [schemaV1], { dialect: "postgres" });
 ```
 
@@ -174,7 +174,7 @@ _relation_name: has_many=target
 Access policies support `public`, `authenticated`, and `owner` for `list`, `create`,
 `update`, and `delete`. Owner policies require an existing `owner_column`.
 
-These blocks are schema metadata. The current DB-only `createParanORM(db)` model API does
+These blocks are schema metadata. The current DB-only `paranorm(db)` model API does
 not load relation or access metadata at runtime.
 
 ## 7. Type inference
@@ -197,10 +197,10 @@ so `InferSchema` inference requires `defineSchema(...)` with a literal or `const
 ## 8. Query model API
 
 ```ts
-const paranorm = createParanORM(db);
+const orm = paranorm(db);
 ```
 
-`createParanORM` accepts only `Kysely<DB>`. A lazy proxy creates one model per accessed table.
+`paranorm` accepts only `Kysely<DB>`. A lazy proxy creates one model per accessed table.
 
 Each model provides:
 
@@ -214,14 +214,14 @@ Each model provides:
 Selections produce projected result types:
 
 ```ts
-const rows = await paranorm.users.findMany({
+const rows = await orm.users.findMany({
   select: { id: true, email: true },
 });
 // Array<{ id: string; email: string }>
 ```
 
 Writes use Kysely's `Insertable<Table>` and `Updateable<Table>` types. Single-row writes
-return the affected row or throw `ParanORMError("NOT_FOUND")`. Mutation returning and upsert
+return the affected row or throw `ParanOrmError("NOT_FOUND")`. Mutation returning and upsert
 support remain subject to the configured SQL dialect.
 
 Filters support direct equality, `AND`/`OR`/`NOT`, string matching, comparisons, sets, and
@@ -296,7 +296,7 @@ Allow typed reusable `where`, selection, and ordering fragments that can be shar
 
 ### 8. Transaction ergonomics
 
-Document and test `createParanORM(trx)` with Kysely transactions, and add an optional helper
+Document and test `paranorm(trx)` with Kysely transactions, and add an optional helper
 that scopes a ParanORM instance to a transaction callback.
 
 ### 9. CLI tooling

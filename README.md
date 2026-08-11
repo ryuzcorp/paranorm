@@ -15,7 +15,7 @@ Keep the YAML as a literal so TypeScript can infer its database type:
 
 ```ts
 import { Kysely } from "kysely";
-import { createParanORM, defineSchema, type InferSchema } from "paranorm";
+import { paranorm, defineSchema, type InferSchema } from "paranorm";
 
 const schema = defineSchema(`
   _version: "1.0.0"
@@ -35,9 +35,9 @@ const schema = defineSchema(`
 type DB = InferSchema<typeof schema>;
 
 const db = new Kysely<DB>({ dialect });
-const paranorm = createParanORM(db);
+const orm = paranorm(db);
 
-const posts = await paranorm.posts.findMany({
+const posts = await orm.posts.findMany({
   where: {
     status: "published",
     OR: [{ title: { contains: "Kysely" } }, { title: { startsWith: "SQL" } }],
@@ -48,7 +48,7 @@ const posts = await paranorm.posts.findMany({
 });
 ```
 
-`createParanORM` accepts only `Kysely<DB>`. Models are created lazily through a proxy, while
+`paranorm` accepts only `Kysely<DB>`. Models are created lazily through a proxy, while
 table names, columns, rows, filters, and operators are inferred from the Kysely database
 type. No table list, schema object, or relation metadata is passed to the query wrapper.
 
@@ -57,25 +57,25 @@ type. No table list, schema object, or relation metadata is passed to the query 
 Every inferred table exposes:
 
 ```ts
-paranorm.users.findMany(args?)
-paranorm.users.findFirst(args?)
-paranorm.users.findUnique({ where })
-paranorm.users.create({ data })
-paranorm.users.createMany({ data })
-paranorm.users.update({ where, data })
-paranorm.users.updateMany({ where, data })
-paranorm.users.delete({ where })
-paranorm.users.deleteMany({ where })
-paranorm.users.upsert({ where, create, update })
-paranorm.users.count({ where }?)
-paranorm.users.exists({ where }?)
-paranorm.users.paginate(args)
+orm.users.findMany(args?)
+orm.users.findFirst(args?)
+orm.users.findUnique({ where })
+orm.users.create({ data })
+orm.users.createMany({ data })
+orm.users.update({ where, data })
+orm.users.updateMany({ where, data })
+orm.users.delete({ where })
+orm.users.deleteMany({ where })
+orm.users.upsert({ where, create, update })
+orm.users.count({ where }?)
+orm.users.exists({ where }?)
+orm.users.paginate(args)
 ```
 
 Selections return projected types instead of the full row:
 
 ```ts
-const users = await paranorm.users.findMany({
+const users = await orm.users.findMany({
   select: { id: true, email: true },
 });
 // Array<{ id: string; email: string }>
@@ -89,7 +89,7 @@ the affected row; `updateMany` and `deleteMany` return affected counts.
 Fields accept direct equality values or type-specific operators:
 
 ```ts
-await paranorm.users.findMany({
+await orm.users.findMany({
   where: {
     email: { endsWith: "@example.com" },
     name: { notIn: ["Bot", "Deleted"] },
@@ -115,7 +115,7 @@ LIKE wildcards in user values are escaped automatically.
 Offset pagination:
 
 ```ts
-const page = await paranorm.posts.paginate({
+const page = await orm.posts.paginate({
   orderBy: [{ id: "asc" }],
   take: 20,
   skip: 40,
@@ -125,12 +125,12 @@ const page = await paranorm.posts.paginate({
 Cursor pagination:
 
 ```ts
-const first = await paranorm.posts.paginate({
+const first = await orm.posts.paginate({
   orderBy: [{ published_at: "desc" }, { id: "asc" }],
   take: 20,
 });
 
-const next = await paranorm.posts.paginate({
+const next = await orm.posts.paginate({
   orderBy: [{ published_at: "desc" }, { id: "asc" }],
   take: 20,
   after: first.pagination.endCursor!,

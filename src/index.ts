@@ -1,8 +1,8 @@
-export { createParanORM, ParanORMError } from "./paranorm.ts";
+export { paranorm, ParanOrmError } from "./paranorm.ts";
 export type {
   FindArgs,
-  ParanORM,
-  ParanORMModel,
+  ParanOrm,
+  ParanOrmModel,
   OrderByClause,
   PaginateArgs,
   PaginationMeta,
@@ -23,7 +23,7 @@ export {
 } from "./migration-provider.ts";
 export type {
   CreateMigratorOptions,
-  ParanORMMigrator,
+  ParanOrmMigrator,
   MigrationDialect,
   MigrationPlanOperation,
   MigrationSqlPreview,
