@@ -1,0 +1,79 @@
+_version: "1.0.0"
+
+# _extends: opt-in schema macros, expanded before tables are processed.
+#   auth  → injects user/session/account/verification tables (Better Auth shape)
+#   files → adds upload/download/attach endpoints; configure via _files: below
+# NOT enabling `auth` here since `users` is still hand-rolled below —
+# pick one or the other, don't run both against the same concept.
+_extends: [files]
+
+_files:
+  attach_to: [entries]
+  owner: false
+
+# --- syntax reference ---
+# id sizing:        id                → varchar(255), default=auto
+#                    id(varchar(64))  → custom column type, still default=auto
+#
+# raw sql default:  default=now, default="draft", default=auto  → keyword/literal
+#                    default=sql("gen_random_uuid()")            → raw SQL expression, SQL dbs only
+#
+# foreign keys:      column: references=table.column   → raw FK constraint on the column
+#                     _relations block declares named ORM relation objects:
+#                       belongs_to=X (needs a references=X.* column on this table)
+#                       has_many=X   (reverse lookup, virtual, no column)
+#
+# composite unique:  unique=[table.col_a, table.col_b] listed on every participating column
+#                     bare "unique" still means single-column unique
+#
+# _access:           per-table row-level permission policy, applied to generated CRUD:
+#                       list / create / update / delete: public | authenticated | owner
+#                       owner_column: <column>  → required when any action is "owner";
+#                       auto-filled on create, checked against the current user on update/delete
+# --------------------------
+
+projects:
+  id: id
+  slug: string unique
+  name: string
+  settings: json?
+  created_at: timestamp default=now
+  _relations:
+    entryTypes: has_many=entry_types
+    entries: has_many=entries
+
+entry_types:
+  id: id
+  project_id: references=projects.id unique=[entry_types.project_id, entry_types.name]
+  name: string unique=[entry_types.project_id, entry_types.name]
+  schema: json # field defs authored per project, e.g. {title: text, body: richtext}
+  _relations:
+    project: belongs_to=projects
+    entries: has_many=entries
+
+entries:
+  id: id
+  project_id: references=projects.id unique=[entries.project_id, entries.slug]
+  entry_type_id: references=entry_types.id
+  author_id: references=users.id
+  slug: string unique=[entries.project_id, entries.slug]
+  status: string default="draft"
+  data: json # actual field values, shaped by entry_types.schema
+  created_at: timestamp default=now
+  updated_at: timestamp?
+  _relations:
+    project: belongs_to=projects
+    entryType: belongs_to=entry_types
+    author: belongs_to=users
+  _access:
+    list: public
+    create: authenticated
+    update: owner
+    delete: owner
+    owner_column: author_id
+
+users:
+  id: id(varchar(64))
+  email: string unique
+  password_hash: string
+  created_at: timestamp default=sql("now()")

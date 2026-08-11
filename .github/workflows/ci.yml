@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install
+      - run: bun run check
+      - name: Publish nightly package
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: bunx pkg-pr-new publish --commentWithSha --packageManager=bun --previewVersion
