@@ -1,7 +1,6 @@
-import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-
-import { Kysely, SqliteDialect } from "kysely";
+import { Effect } from "effect";
+import { SqliteClient } from "@effect/sql-sqlite-node";
 
 import {
   createMigrator,
@@ -124,24 +123,6 @@ describe("schema authoring", () => {
   });
 });
 
-function migrationDatabase() {
-  const sqlite = new Database(":memory:");
-  const database = {
-    close: () => sqlite.close(),
-    prepare: (query: string) => {
-      const statement = sqlite.prepare(query);
-      return {
-        reader: /^\s*(select|pragma|with)\b/i.test(query) || /\breturning\b/i.test(query),
-        all: (parameters: readonly unknown[]) => statement.all(...(parameters as never[])),
-        run: (parameters: readonly unknown[]) => statement.run(...(parameters as never[])),
-        iterate: (parameters: readonly unknown[]) => statement.iterate(...(parameters as never[])),
-      };
-    },
-  };
-  const config = { database } as unknown as ConstructorParameters<typeof SqliteDialect>[0];
-  return { sqlite, db: new Kysely<Record<string, never>>({ dialect: new SqliteDialect(config) }) };
-}
-
 describe("schema migrations", () => {
   test("diffs consecutive schemas", () => {
     const diff = diffSchemas(parseSchema(v1), parseSchema(v2));
@@ -151,93 +132,69 @@ describe("schema migrations", () => {
     expect(diff.removedColumns).toHaveLength(0);
   });
 
-  test("exposes one Kysely migration per schema version", async () => {
+  test("exposes one migration per schema version", () => {
     const provider = new SchemaMigrationProvider({
       schemas: [{ content: v1 }, { name: "002_v2", content: v2 }],
     });
-    const migrations = await provider.getMigrations();
+    const migrations = provider.getMigrations();
     expect(Object.keys(migrations)).toEqual(["1.0.0", "002_v2"]);
-    expect(migrations["002_v2"]!.up).toBeFunction();
-    expect(migrations["002_v2"]!.down).toBeFunction();
+    expect(migrations["002_v2"]!.id).toBe(2);
   });
 
-  test("renders dialect-aware migration SQL", async () => {
+  test("renders sqlite migration SQL", () => {
     const authored = defineSchema(
       `_version: "1.0.0"\nrecords:\n  id: id(bigint)\n  payload: json\n  bytes: binary\n`,
     );
-    const sqliteSetup = migrationDatabase();
-    const sqliteSql = await createMigrator(sqliteSetup.db, [authored], { dialect: "sqlite" }).sql();
+    const sqliteSql = createMigrator([authored], { dialect: "sqlite" }).sql();
     const sqliteStatement = sqliteSql[0]!.statements[0]!.sql;
     expect(sqliteStatement).toContain('"id" integer');
     expect(sqliteStatement).toContain('"payload" json');
     expect(sqliteStatement).toContain('"bytes" blob');
-    await sqliteSetup.db.destroy();
-
-    const postgresSetup = migrationDatabase();
-    const postgresSql = await createMigrator(postgresSetup.db, [authored], {
-      dialect: "postgres",
-    }).sql();
-    const postgresStatement = postgresSql[0]!.statements[0]!.sql;
-    expect(postgresStatement).toContain('"id" bigint');
-    expect(postgresStatement).toContain('"payload" jsonb');
-    expect(postgresStatement).toContain('"bytes" bytea');
-    await postgresSetup.db.destroy();
   });
 
-  test("creates Kysely Migrator with schema sugar", async () => {
+  test("creates Effect migrator with schema sugar", async () => {
     const first = defineSchema(
       `_version: "1.0.0"\npeople:\n  id: id(varchar(64))\n  name: string\n`,
     );
     const second = defineSchema(
       `_version: "2.0.0"\npeople:\n  id: id(varchar(64))\n  name: string\n  email: string? index\n`,
     );
-    const { db, sqlite } = migrationDatabase();
-    const migrator = createMigrator(db, [first, second], {
-      migrationTableName: "paranorm_migration",
-      migrationLockTableName: "paranorm_migration_lock",
+    const migrator = createMigrator([first, second], {
+      table: "paranorm_migration",
     });
 
-    const plan = await migrator.plan();
+    const plan = migrator.plan();
     expect(plan).toHaveLength(2);
     expect(plan[1]).toMatchObject({
       name: "2.0.0",
       destructive: false,
       operations: [{ kind: "addColumn", table: "people", column: "email" }],
     });
-    expect(await migrator.validate()).toEqual(plan);
-    const preview = await migrator.sql();
+    expect(migrator.validate()).toEqual(plan);
+    const preview = migrator.sql();
     expect(
       preview.flatMap((migration) => migration.statements.map((statement) => statement.sql)),
-    ).toContain('alter table "people" add column "email" varchar(255)');
+    ).toContain('ALTER TABLE "people" ADD COLUMN "email" varchar(255)');
 
-    const latest = await migrator.migrateToLatest();
-    expect(latest.error).toBeUndefined();
-    expect(latest.results?.map((result) => [result.migrationName, result.status])).toEqual([
-      ["1.0.0", "Success"],
-      ["2.0.0", "Success"],
-    ]);
-    expect(await migrator.plan()).toEqual([]);
-    expect(
-      sqlite
-        .query<{ name: string }, []>("pragma table_info('people')")
-        .all()
-        .map((column) => column.name),
-    ).toEqual(["id", "name", "email"]);
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const applied = yield* migrator.migrate;
+        expect(applied).toEqual([
+          [1, "1.0.0"],
+          [2, "2.0.0"],
+        ]);
+        expect(migrator.plan()).toHaveLength(2);
 
-    const down = await migrator.migrateDown();
-    expect(down.error).toBeUndefined();
-    expect(down.results?.[0]).toMatchObject({
-      migrationName: "2.0.0",
-      direction: "Down",
-      status: "Success",
-    });
-    expect(
-      sqlite
-        .query<{ name: string }, []>("pragma table_info('people')")
-        .all()
-        .map((column) => column.name),
-    ).toEqual(["id", "name"]);
+        const sql = yield* SqliteClient.SqliteClient;
+        const columns = yield* sql<{ name: string }>`pragma table_info('people')`;
+        expect(columns.map((column) => column.name)).toEqual(["id", "name", "email"]);
 
-    await db.destroy();
+        const again = yield* migrator.migrate;
+        expect(again).toEqual([]);
+      }).pipe(
+        Effect.provide(SqliteClient.layer({ filename: ":memory:", disableWAL: true })),
+        Effect.scoped,
+      ),
+    );
   });
 });

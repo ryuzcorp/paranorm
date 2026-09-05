@@ -1,4 +1,9 @@
-import { sql, type Insertable, type Kysely, type Selectable, type Updateable } from "kysely";
+import * as Effect from "effect/Effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
+import type { SqlError } from "effect/unstable/sql/SqlError";
+import type { Fragment } from "effect/unstable/sql/Statement";
+
+import type { Insertable, Selectable, Updateable } from "./column-type.ts";
 
 type NullFilter = { isNull?: boolean };
 type StringFilter = {
@@ -81,7 +86,9 @@ export interface PaginationResult<T> {
   data: T[];
   pagination: PaginationMeta;
 }
+
 export class ParanOrmError extends Error {
+  readonly _tag = "ParanOrmError";
   constructor(
     readonly code: "BAD_REQUEST" | "NOT_FOUND",
     message: string,
@@ -93,77 +100,46 @@ export class ParanOrmError extends Error {
 }
 
 type UniqueWhere<T> = { [K in keyof T]?: T[K] };
+type OrmEffect<A> = Effect.Effect<A, ParanOrmError | SqlError, SqlClient>;
+
 export interface ParanOrmModel<Table> {
   findMany<const Args extends FindArgs<Selectable<Table>> | undefined = undefined>(
     args?: Args,
-  ): Promise<SelectedResult<Selectable<Table>, Args>[]>;
+  ): OrmEffect<SelectedResult<Selectable<Table>, Args>[]>;
   findFirst<const Args extends FindArgs<Selectable<Table>> | undefined = undefined>(
     args?: Args,
-  ): Promise<SelectedResult<Selectable<Table>, Args> | null>;
-  findUnique(args: { where: UniqueWhere<Selectable<Table>> }): Promise<Selectable<Table>>;
-  create(args: { data: Insertable<Table> }): Promise<Selectable<Table>>;
-  createMany(args: { data: readonly Insertable<Table>[] }): Promise<Selectable<Table>[]>;
+  ): OrmEffect<SelectedResult<Selectable<Table>, Args> | null>;
+  findUnique(args: { where: UniqueWhere<Selectable<Table>> }): OrmEffect<Selectable<Table>>;
+  create(args: { data: Insertable<Table> }): OrmEffect<Selectable<Table>>;
+  createMany(args: { data: readonly Insertable<Table>[] }): OrmEffect<Selectable<Table>[]>;
   update(args: {
     where: UniqueWhere<Selectable<Table>>;
     data: Updateable<Table>;
-  }): Promise<Selectable<Table>>;
+  }): OrmEffect<Selectable<Table>>;
   updateMany(args: {
     where?: WhereClause<Selectable<Table>>;
     data: Updateable<Table>;
-  }): Promise<number>;
-  delete(args: { where: UniqueWhere<Selectable<Table>> }): Promise<Selectable<Table>>;
-  deleteMany(args?: { where?: WhereClause<Selectable<Table>> }): Promise<number>;
+  }): OrmEffect<number>;
+  delete(args: { where: UniqueWhere<Selectable<Table>> }): OrmEffect<Selectable<Table>>;
+  deleteMany(args?: { where?: WhereClause<Selectable<Table>> }): OrmEffect<number>;
   upsert(args: {
     where: UniqueWhere<Selectable<Table>>;
     create: Insertable<Table>;
     update: Updateable<Table>;
-  }): Promise<Selectable<Table>>;
-  count(args?: { where?: WhereClause<Selectable<Table>> }): Promise<number>;
-  exists(args?: { where?: WhereClause<Selectable<Table>> }): Promise<boolean>;
+  }): OrmEffect<Selectable<Table>>;
+  count(args?: { where?: WhereClause<Selectable<Table>> }): OrmEffect<number>;
+  exists(args?: { where?: WhereClause<Selectable<Table>> }): OrmEffect<boolean>;
   paginate<const Args extends PaginateArgs<Selectable<Table>>>(
     args: Args,
-  ): Promise<PaginationResult<SelectedResult<Selectable<Table>, Args>>>;
+  ): OrmEffect<PaginationResult<SelectedResult<Selectable<Table>, Args>>>;
 }
 export type ParanOrm<TDB> = { [K in keyof TDB]: ParanOrmModel<TDB[K]> };
 
 function escapeLike(value: unknown): string {
   return String(value).replace(/[\\%_]/g, (character) => `\\${character}`);
 }
-function likeExpr(field: string, pattern: string) {
-  return sql`${sql.ref(field)} like ${pattern} escape '\\'`;
-}
 
-function opToExpr(eb: any, field: string, operation: string, value: any): any {
-  switch (operation) {
-    case "equals":
-      return eb(field, "=", value);
-    case "not":
-      return eb(field, "!=", value);
-    case "in":
-      return eb(field, "in", value);
-    case "notIn":
-      return eb(field, "not in", value);
-    case "lt":
-      return eb(field, "<", value);
-    case "lte":
-      return eb(field, "<=", value);
-    case "gt":
-      return eb(field, ">", value);
-    case "gte":
-      return eb(field, ">=", value);
-    case "contains":
-      return likeExpr(field, `%${escapeLike(value)}%`);
-    case "startsWith":
-      return likeExpr(field, `${escapeLike(value)}%`);
-    case "endsWith":
-      return likeExpr(field, `%${escapeLike(value)}`);
-    case "isNull":
-      return value ? eb(field, "is", null) : eb(field, "is not", null);
-    default:
-      return eb(field, "=", value);
-  }
-}
-function fieldToExprs(eb: any, field: string, filter: any): any[] {
+function fieldFragment(sql: SqlClient, field: string, filter: unknown): Fragment[] {
   if (filter === undefined) return [];
   if (
     filter === null ||
@@ -171,62 +147,94 @@ function fieldToExprs(eb: any, field: string, filter: any): any[] {
     filter instanceof Date ||
     Array.isArray(filter)
   )
-    return [eb(field, "=", filter)];
-  return Object.entries(filter).map(([operation, value]) => opToExpr(eb, field, operation, value));
+    return [sql`${sql(field)} = ${filter}`];
+
+  const fragments: Fragment[] = [];
+  for (const [operation, value] of Object.entries(filter as Record<string, unknown>)) {
+    switch (operation) {
+      case "equals":
+        fragments.push(sql`${sql(field)} = ${value}`);
+        break;
+      case "not":
+        fragments.push(sql`${sql(field)} != ${value}`);
+        break;
+      case "in":
+        fragments.push(sql`${sql.in(field, value as readonly unknown[])}`);
+        break;
+      case "notIn":
+        fragments.push(sql`NOT ${sql.in(field, value as readonly unknown[])}`);
+        break;
+      case "lt":
+        fragments.push(sql`${sql(field)} < ${value}`);
+        break;
+      case "lte":
+        fragments.push(sql`${sql(field)} <= ${value}`);
+        break;
+      case "gt":
+        fragments.push(sql`${sql(field)} > ${value}`);
+        break;
+      case "gte":
+        fragments.push(sql`${sql(field)} >= ${value}`);
+        break;
+      case "contains":
+        fragments.push(sql`${sql(field)} LIKE ${`%${escapeLike(value)}%`} ESCAPE '\\'`);
+        break;
+      case "startsWith":
+        fragments.push(sql`${sql(field)} LIKE ${`${escapeLike(value)}%`} ESCAPE '\\'`);
+        break;
+      case "endsWith":
+        fragments.push(sql`${sql(field)} LIKE ${`%${escapeLike(value)}`} ESCAPE '\\'`);
+        break;
+      case "isNull":
+        fragments.push(value ? sql`${sql(field)} IS NULL` : sql`${sql(field)} IS NOT NULL`);
+        break;
+      default:
+        fragments.push(sql`${sql(field)} = ${value}`);
+    }
+  }
+  return fragments;
 }
-function clauseToExprs(eb: any, clause: Record<string, any>): any[] {
-  const expressions: any[] = [];
+
+function clauseFragments(sql: SqlClient, clause: Record<string, unknown>): Fragment[] {
+  const fragments: Fragment[] = [];
   for (const [field, filter] of Object.entries(clause)) {
     if (filter === undefined) continue;
     if (field === "AND" && Array.isArray(filter)) {
-      const nested = filter.flatMap((item) => clauseToExprs(eb, item));
-      expressions.push(nested.length ? eb.and(nested) : eb.lit(1));
+      const nested = filter.flatMap((item) =>
+        clauseFragments(sql, item as Record<string, unknown>),
+      );
+      fragments.push(sql.and(nested));
     } else if (field === "OR" && Array.isArray(filter)) {
-      expressions.push(
-        eb.or(
+      fragments.push(
+        sql.or(
           filter.map((item) => {
-            const nested = clauseToExprs(eb, item);
-            return nested.length ? eb.and(nested) : eb.lit(1);
+            const nested = clauseFragments(sql, item as Record<string, unknown>);
+            return sql.and(nested);
           }),
         ),
       );
     } else if (field === "NOT") {
-      const nested = clauseToExprs(eb, filter as Record<string, any>);
-      expressions.push(eb.not(nested.length ? eb.and(nested) : eb.lit(1)));
-    } else expressions.push(...fieldToExprs(eb, field, filter));
+      const nested = clauseFragments(sql, filter as Record<string, unknown>);
+      fragments.push(sql`NOT (${sql.and(nested)})`);
+    } else fragments.push(...fieldFragment(sql, field, filter));
   }
-  return expressions;
+  return fragments;
 }
-function applyWhere(qb: any, where: Record<string, any>): any {
-  for (const [field, filter] of Object.entries(where)) {
-    if (filter === undefined) continue;
-    if (field === "AND" && Array.isArray(filter)) {
-      for (const clause of filter) qb = applyWhere(qb, clause);
-    } else if (field === "OR" && Array.isArray(filter))
-      qb = qb.where((eb: any) =>
-        eb.or(
-          filter.map((clause) => {
-            const nested = clauseToExprs(eb, clause);
-            return nested.length ? eb.and(nested) : eb.lit(1);
-          }),
-        ),
-      );
-    else if (field === "NOT")
-      qb = qb.where((eb: any) => {
-        const nested = clauseToExprs(eb, filter as Record<string, any>);
-        return eb.not(nested.length ? eb.and(nested) : eb.lit(1));
-      });
-    else if (
-      filter !== null &&
-      typeof filter === "object" &&
-      !Array.isArray(filter) &&
-      !(filter instanceof Date)
-    )
-      for (const [operation, value] of Object.entries(filter))
-        qb = qb.where((eb: any) => opToExpr(eb, field, operation, value));
-    else qb = qb.where(field, "=", filter);
-  }
-  return qb;
+
+function whereFragment(sql: SqlClient, where?: Record<string, unknown>): Fragment | undefined {
+  if (!where) return undefined;
+  const fragments = clauseFragments(sql, where);
+  return fragments.length ? sql.and(fragments) : undefined;
+}
+
+function orderFragments(sql: SqlClient, orderBy?: OrderByClause<any>[]): Fragment[] {
+  if (!orderBy?.length) return [];
+  const parts: Fragment[] = [];
+  for (const order of orderBy)
+    for (const [column, direction] of Object.entries(order))
+      if (direction)
+        parts.push(direction === "desc" ? sql`${sql(column)} DESC` : sql`${sql(column)} ASC`);
+  return parts;
 }
 
 function encodeCursor(row: any, orderBy: OrderByClause<any>[]): string {
@@ -245,35 +253,34 @@ function decodeCursor(cursor: string): Record<string, any> {
     const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
     return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   } catch (cause) {
-    throw new ParanOrmError("BAD_REQUEST", "Invalid pagination cursor", {
-      cause,
-    });
+    throw new ParanOrmError("BAD_REQUEST", "Invalid pagination cursor", { cause });
   }
 }
-function applyCursorWhere(
-  query: any,
+function cursorFragment(
+  sql: SqlClient,
   cursor: Record<string, any>,
   orderBy: OrderByClause<any>[],
   direction: "after" | "before",
-): any {
+): Fragment | undefined {
   const entries = orderBy.flatMap((order) => Object.entries(order)) as [string, "asc" | "desc"][];
-  if (!entries.length) return query;
-  return query.where((eb: any) =>
-    eb.or(
-      entries.map(([column, order], index) => {
-        const parts = entries
-          .slice(0, index)
-          .map(([previous]) => eb(previous, "=", cursor[previous]));
-        const forward = direction === "after" ? order === "asc" : order === "desc";
-        parts.push(eb(column, forward ? ">" : "<", cursor[column]));
-        return parts.length === 1 ? parts[0] : eb.and(parts);
-      }),
-    ),
+  if (!entries.length) return undefined;
+  return sql.or(
+    entries.map(([column, order], index) => {
+      const parts = entries
+        .slice(0, index)
+        .map(([previous]) => sql`${sql(previous)} = ${cursor[previous]}`);
+      const forward = direction === "after" ? order === "asc" : order === "desc";
+      parts.push(
+        forward ? sql`${sql(column)} > ${cursor[column]}` : sql`${sql(column)} < ${cursor[column]}`,
+      );
+      return sql.and(parts);
+    }),
   );
 }
 
-function createModel<Table>(db: Kysely<any>, tableName: string): ParanOrmModel<Table> {
+function createModel<Table>(tableName: string): ParanOrmModel<Table> {
   type Row = Selectable<Table>;
+
   function selectedColumns(select?: SelectClause<Row>): string[] {
     return select
       ? Object.entries(select)
@@ -281,171 +288,221 @@ function createModel<Table>(db: Kysely<any>, tableName: string): ParanOrmModel<T
           .map(([column]) => column)
       : [];
   }
-  function buildSelect(args?: FindArgs<Row>, limitOverride?: number): any {
-    let query: any = db.selectFrom(tableName);
-    if (args?.where) query = applyWhere(query, args.where as Record<string, any>);
-    if (args?.orderBy)
-      for (const order of args.orderBy)
-        for (const [column, direction] of Object.entries(order))
-          if (direction) query = query.orderBy(column, direction);
-    const limit = limitOverride ?? args?.take;
-    if (limit !== undefined) query = query.limit(limit);
-    if (args?.skip !== undefined) query = query.offset(args.skip);
-    const columns = selectedColumns(args?.select);
-    return columns.length ? query.select(columns) : query.selectAll();
-  }
-  function buildCount(where?: WhereClause<Row>): any {
-    let query: any = db.selectFrom(tableName).select((eb: any) => eb.fn.countAll().as("n"));
-    if (where) query = applyWhere(query, where as Record<string, any>);
-    return query;
-  }
-  async function run(args?: FindArgs<Row>, limitOverride?: number): Promise<any[]> {
-    return buildSelect(args, limitOverride).execute();
-  }
-  async function oneMutation(query: any): Promise<Row> {
-    const row = await query.returningAll().executeTakeFirst();
-    if (row == null) throw new ParanOrmError("NOT_FOUND", `${tableName}: record not found`);
-    return row as Row;
-  }
-  const model = {
-    findMany: (args?: FindArgs<Row>) => run(args),
-    findFirst: async (args?: FindArgs<Row>) => (await run(args, 1))[0] ?? null,
-    findUnique: async ({ where }: { where: UniqueWhere<Row> }) => {
-      let query: any = db.selectFrom(tableName).selectAll();
-      query = applyWhere(query, where as Record<string, any>);
-      const row = await query.executeTakeFirst();
-      if (row == null) throw new ParanOrmError("NOT_FOUND", `${tableName}: record not found`);
-      return row as Row;
-    },
-    create: ({ data }: { data: Insertable<Table> }) =>
-      oneMutation(db.insertInto(tableName).values(data as any)),
-    createMany: async ({ data }: { data: readonly Insertable<Table>[] }) => {
-      if (!data.length) return [];
-      return db
-        .insertInto(tableName)
-        .values(data as any)
-        .returningAll()
-        .execute() as Promise<Row[]>;
-    },
-    update: ({ where, data }: { where: UniqueWhere<Row>; data: Updateable<Table> }) => {
-      let query: any = db.updateTable(tableName).set(data as any);
-      query = applyWhere(query, where as Record<string, any>);
-      return oneMutation(query);
-    },
-    updateMany: async ({ where, data }: { where?: WhereClause<Row>; data: Updateable<Table> }) => {
-      let query: any = db.updateTable(tableName).set(data as any);
-      if (where) query = applyWhere(query, where as Record<string, any>);
-      return Number((await query.executeTakeFirst()).numUpdatedRows);
-    },
-    delete: ({ where }: { where: UniqueWhere<Row> }) => {
-      let query: any = db.deleteFrom(tableName);
-      query = applyWhere(query, where as Record<string, any>);
-      return oneMutation(query);
-    },
-    deleteMany: async (args?: { where?: WhereClause<Row> }) => {
-      let query: any = db.deleteFrom(tableName);
-      if (args?.where) query = applyWhere(query, args.where as Record<string, any>);
-      return Number((await query.executeTakeFirst()).numDeletedRows);
-    },
-    upsert: ({
-      where,
-      create,
-      update,
-    }: {
-      where: UniqueWhere<Row>;
-      create: Insertable<Table>;
-      update: Updateable<Table>;
-    }) => {
-      const columns = Object.keys(where);
-      if (!columns.length)
-        throw new ParanOrmError("BAD_REQUEST", `${tableName}.upsert requires a conflict key`);
-      const query = db
-        .insertInto(tableName)
-        .values(create as any)
-        .onConflict((conflict: any) => conflict.columns(columns).doUpdateSet(update as any));
-      return oneMutation(query);
-    },
-    count: async (args?: { where?: WhereClause<Row> }) =>
-      Number((await buildCount(args?.where).executeTakeFirstOrThrow()).n),
-    exists: async (args?: { where?: WhereClause<Row> }) => {
-      let query: any = db
-        .selectFrom(tableName)
-        .select((eb: any) => eb.lit(1).as("x"))
-        .limit(1);
-      if (args?.where) query = applyWhere(query, args.where as Record<string, any>);
-      return (await query.executeTakeFirst()) != null;
-    },
-    paginate: async (args: PaginateArgs<Row>) => {
-      const { take, skip, after, before, orderBy, where, ...rest } = args;
-      const count = Number((await buildCount(where).executeTakeFirstOrThrow()).n);
-      if (skip !== undefined) {
-        const data = await run({
-          ...rest,
-          ...(where !== undefined ? { where } : {}),
-          orderBy,
-          take,
-          skip,
-        });
+
+  const selectRows = (args?: FindArgs<Row>, limitOverride?: number): OrmEffect<any[]> =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient;
+      const where = whereFragment(sql, args?.where as Record<string, unknown> | undefined);
+      const order = orderFragments(sql, args?.orderBy);
+      const columns = selectedColumns(args?.select);
+      const limit = limitOverride ?? args?.take;
+      let query = columns.length
+        ? sql`SELECT ${sql.csv(columns)} FROM ${sql(tableName)}`
+        : sql`SELECT * FROM ${sql(tableName)}`;
+      if (where) query = sql`${query} WHERE ${where}`;
+      if (order.length) query = sql`${query} ORDER BY ${sql.csv(order)}`;
+      if (limit !== undefined) query = sql`${query} LIMIT ${limit}`;
+      if (args?.skip !== undefined) query = sql`${query} OFFSET ${args.skip}`;
+      return [...(yield* query)];
+    });
+
+  const countRows = (where?: WhereClause<Row>): OrmEffect<number> =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient;
+      const filter = whereFragment(sql, where as Record<string, unknown> | undefined);
+      let query = sql<{ n: number }>`SELECT COUNT(*) AS n FROM ${sql(tableName)}`;
+      if (filter) query = sql`${query} WHERE ${filter}`;
+      const [row] = yield* query;
+      return Number(row?.n ?? 0);
+    });
+
+  const one = (rows: readonly Row[]): Effect.Effect<Row, ParanOrmError> =>
+    rows[0] != null
+      ? Effect.succeed(rows[0])
+      : Effect.fail(new ParanOrmError("NOT_FOUND", `${tableName}: record not found`));
+
+  const changes = (): OrmEffect<number> =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient;
+      const [row] = yield* sql<{ n: number }>`SELECT changes() AS n`;
+      return Number(row?.n ?? 0);
+    });
+
+  const model: ParanOrmModel<Table> = {
+    findMany: (args) => selectRows(args),
+    findFirst: (args) => selectRows(args, 1).pipe(Effect.map((rows) => (rows[0] as any) ?? null)),
+    findUnique: ({ where }) =>
+      selectRows({ where: where as WhereClause<Row> }, 1).pipe(
+        Effect.flatMap((rows) => one(rows as Row[])),
+      ),
+    create: ({ data }) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient;
+        const rows =
+          yield* sql<Row>`INSERT INTO ${sql(tableName)} ${sql.insert(data as any).returning("*")}`;
+        return yield* one(rows);
+      }),
+    createMany: ({ data }) =>
+      Effect.gen(function* () {
+        if (!data.length) return [];
+        const sql = yield* SqlClient;
+        return [
+          ...(yield* sql<Row>`INSERT INTO ${sql(tableName)} ${sql.insert(data as any).returning("*")}`),
+        ];
+      }),
+    update: ({ where, data }) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient;
+        const filter = whereFragment(sql, where as Record<string, unknown>);
+        let query = sql<Row>`UPDATE ${sql(tableName)} SET ${sql.update(data as any)}`;
+        if (filter) query = sql`${query} WHERE ${filter}`;
+        query = sql`${query} RETURNING *`;
+        return yield* one(yield* query);
+      }),
+    updateMany: ({ where, data }) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient;
+        const filter = whereFragment(sql, where as Record<string, unknown> | undefined);
+        let query = sql`UPDATE ${sql(tableName)} SET ${sql.update(data as any)}`;
+        if (filter) query = sql`${query} WHERE ${filter}`;
+        yield* query;
+        return yield* changes();
+      }),
+    delete: ({ where }) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient;
+        const filter = whereFragment(sql, where as Record<string, unknown>);
+        let query = sql<Row>`DELETE FROM ${sql(tableName)}`;
+        if (filter) query = sql`${query} WHERE ${filter}`;
+        query = sql`${query} RETURNING *`;
+        return yield* one(yield* query);
+      }),
+    deleteMany: (args) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient;
+        const filter = whereFragment(sql, args?.where as Record<string, unknown> | undefined);
+        let query = sql`DELETE FROM ${sql(tableName)}`;
+        if (filter) query = sql`${query} WHERE ${filter}`;
+        yield* query;
+        return yield* changes();
+      }),
+    upsert: ({ where, create, update }) =>
+      Effect.gen(function* () {
+        const columns = Object.keys(where);
+        if (!columns.length)
+          return yield* Effect.fail(
+            new ParanOrmError("BAD_REQUEST", `${tableName}.upsert requires a conflict key`),
+          );
+        const sql = yield* SqlClient;
+        const rows = yield* sql<Row>`
+          INSERT INTO ${sql(tableName)} ${sql.insert(create as any)}
+          ON CONFLICT (${sql.csv(columns)}) DO UPDATE SET ${sql.update(update as any)}
+          RETURNING *
+        `;
+        return yield* one(rows);
+      }),
+    count: (args) => countRows(args?.where),
+    exists: (args) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient;
+        const filter = whereFragment(sql, args?.where as Record<string, unknown> | undefined);
+        let query = sql`SELECT 1 AS x FROM ${sql(tableName)}`;
+        if (filter) query = sql`${query} WHERE ${filter}`;
+        query = sql`${query} LIMIT 1`;
+        return (yield* query).length > 0;
+      }),
+    paginate: (args) =>
+      Effect.gen(function* () {
+        const { take, skip, after, before, orderBy, where, ...rest } = args;
+        const count = yield* countRows(where);
+        if (skip !== undefined) {
+          const data = yield* selectRows({
+            ...(rest as FindArgs<Row>),
+            ...(where !== undefined ? { where } : {}),
+            orderBy,
+            take,
+            skip,
+          } as FindArgs<Row>);
+          return {
+            data,
+            pagination: {
+              count,
+              hasNext: skip + data.length < count,
+              hasPrevious: skip > 0,
+              startCursor: null,
+              endCursor: null,
+            },
+          };
+        }
+
+        const sql = yield* SqlClient;
+        const direction = before !== undefined ? "before" : "after";
+        const filter = whereFragment(sql, where as Record<string, unknown> | undefined);
+        let cursorFilter: Fragment | undefined;
+        try {
+          if (after) cursorFilter = cursorFragment(sql, decodeCursor(after), orderBy, "after");
+          else if (before)
+            cursorFilter = cursorFragment(sql, decodeCursor(before), orderBy, "before");
+        } catch (error) {
+          return yield* Effect.fail(error as ParanOrmError);
+        }
+
+        const effective: OrderByClause<Row>[] =
+          direction === "before"
+            ? orderBy.map(
+                (order) =>
+                  Object.fromEntries(
+                    Object.entries(order).map(([column, value]) => [
+                      column,
+                      value === "asc" ? "desc" : "asc",
+                    ]),
+                  ) as OrderByClause<Row>,
+              )
+            : orderBy;
+        const order = orderFragments(sql, effective);
+        const columns = selectedColumns(rest.select);
+
+        let query = columns.length
+          ? sql`SELECT ${sql.csv(columns)} FROM ${sql(tableName)}`
+          : sql`SELECT * FROM ${sql(tableName)}`;
+        const filters = [filter, cursorFilter].filter(Boolean) as Fragment[];
+        if (filters.length) query = sql`${query} WHERE ${sql.and(filters)}`;
+        if (order.length) query = sql`${query} ORDER BY ${sql.csv(order)}`;
+        query = sql`${query} LIMIT ${take + 1}`;
+
+        let rows: any[] = [...(yield* query)];
+        const hasMore = rows.length > take;
+        if (hasMore) rows = rows.slice(0, take);
+        if (direction === "before") rows.reverse();
+
         return {
-          data,
+          data: rows,
           pagination: {
             count,
-            hasNext: skip + data.length < count,
-            hasPrevious: skip > 0,
-            startCursor: null,
-            endCursor: null,
+            hasNext: direction === "after" ? hasMore : after !== undefined,
+            hasPrevious: direction === "before" ? hasMore : before !== undefined,
+            startCursor: rows.length ? encodeCursor(rows[0], orderBy) : null,
+            endCursor: rows.length ? encodeCursor(rows.at(-1), orderBy) : null,
           },
         };
-      }
-      const direction = before !== undefined ? "before" : "after";
-      let query: any = db.selectFrom(tableName);
-      if (where) query = applyWhere(query, where as Record<string, any>);
-      if (after) query = applyCursorWhere(query, decodeCursor(after), orderBy, "after");
-      else if (before) query = applyCursorWhere(query, decodeCursor(before), orderBy, "before");
-      const effective =
-        direction === "before"
-          ? orderBy.map((order) =>
-              Object.fromEntries(
-                Object.entries(order).map(([column, value]) => [
-                  column,
-                  value === "asc" ? "desc" : "asc",
-                ]),
-              ),
-            )
-          : orderBy;
-      for (const order of effective)
-        for (const [column, value] of Object.entries(order))
-          if (value) query = query.orderBy(column, value);
-      const columns = selectedColumns(rest.select);
-      query = columns.length ? query.select(columns) : query.selectAll();
-      let rows: any[] = await query.limit(take + 1).execute();
-      const hasMore = rows.length > take;
-      if (hasMore) rows = rows.slice(0, take);
-      if (direction === "before") rows.reverse();
-      return {
-        data: rows,
-        pagination: {
-          count,
-          hasNext: direction === "after" ? hasMore : after !== undefined,
-          hasPrevious: direction === "before" ? hasMore : before !== undefined,
-          startCursor: rows.length ? encodeCursor(rows[0], orderBy) : null,
-          endCursor: rows.length ? encodeCursor(rows.at(-1), orderBy) : null,
-        },
-      };
-    },
+      }),
   };
-  return model as ParanOrmModel<Table>;
+
+  return model;
 }
 
-export function paranorm<TDB>(db: Kysely<TDB>): ParanOrm<TDB> {
+/**
+ * Creates typed models from a database interface. Each method returns an Effect
+ * that requires `SqlClient` — provide either `@effect/sql-d1` or
+ * `@effect/sql-sqlite-node` at the edges.
+ */
+export function paranorm<TDB>(): ParanOrm<TDB> {
   const models: Record<string, unknown> = {};
   const model = (tableName: string) => {
-    models[tableName] ??= createModel(db as Kysely<any>, tableName);
+    models[tableName] ??= createModel(tableName);
     return models[tableName];
   };
 
-  // Kysely's DB generic is erased at runtime. A proxy lets table properties create
-  // their model lazily while TypeScript restricts them to keyof TDB.
   return new Proxy(models, {
     get(target, property, receiver) {
       if (typeof property !== "string") return Reflect.get(target, property, receiver);

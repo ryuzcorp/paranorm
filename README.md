@@ -1,21 +1,31 @@
 # ParanORM
 
-Kysely on steroids: author database schemas in YAML, infer Kysely types, apply schema-diff
-migrations, and query through a compact model API.
+Effect SQL on steroids: author database schemas in YAML, infer typed database
+interfaces, apply schema-diff migrations, and query through a compact model API.
 
 ## Install
 
 ```bash
-npm i paranorm kysely
+npm i paranorm effect
+
+# Cloudflare Workers / celld (D1)
+npm i @effect/sql-d1
+
+# Node Fetch / standard Node (node:sqlite, Node 22.16+)
+npm i @effect/sql-sqlite-node
 ```
 
 ## Quick start
 
-Keep the YAML as a literal so TypeScript can infer its database type:
+Keep the YAML as a literal so TypeScript can infer its database type. Choose a
+dialect layer for your runtime, then query through Effects:
 
 ```ts
-import { Kysely } from "kysely";
+import { Effect } from "effect";
 import { paranorm, defineSchema, type InferSchema } from "paranorm";
+import { SqliteClient } from "paranorm/sqlite-node";
+// Cloudflare / celld:
+// import { D1Client } from "paranorm/d1";
 
 const schema = defineSchema(`
   _version: "1.0.0"
@@ -33,24 +43,44 @@ const schema = defineSchema(`
 `);
 
 type DB = InferSchema<typeof schema>;
+const orm = paranorm<DB>();
 
-const db = new Kysely<DB>({ dialect });
-const orm = paranorm(db);
-
-const posts = await orm.posts.findMany({
-  where: {
-    status: "published",
-    OR: [{ title: { contains: "Kysely" } }, { title: { startsWith: "SQL" } }],
-  },
-  select: { id: true, title: true },
-  orderBy: [{ published_at: "desc" }],
-  take: 20,
+const program = Effect.gen(function* () {
+  return yield* orm.posts.findMany({
+    where: {
+      status: "published",
+      OR: [{ title: { contains: "Effect" } }, { title: { startsWith: "SQL" } }],
+    },
+    select: { id: true, title: true },
+    orderBy: [{ published_at: "desc" }],
+    take: 20,
+  });
 });
+
+const posts = await Effect.runPromise(
+  program.pipe(Effect.provide(SqliteClient.layer({ filename: "app.db" })), Effect.scoped),
+);
 ```
 
-`paranorm` accepts only `Kysely<DB>`. Models are created lazily through a proxy, while
-table names, columns, rows, filters, and operators are inferred from the Kysely database
-type. No table list, schema object, or relation metadata is passed to the query wrapper.
+On Cloudflare Workers / celld, swap the layer:
+
+```ts
+program.pipe(Effect.provide(D1Client.layer({ db: env.DB })), Effect.scoped);
+```
+
+`paranorm<DB>()` creates models lazily through a proxy. Table names, columns,
+rows, filters, and operators are inferred from `DB`. Methods return Effects that
+require `SqlClient` from `effect/unstable/sql`.
+
+## Dialects
+
+| Runtime                    | Entry                  | Layer                              |
+| -------------------------- | ---------------------- | ---------------------------------- |
+| Cloudflare Workers / celld | `paranorm/d1`          | `D1Client.layer({ db })`           |
+| Node Fetch / `node:sqlite` | `paranorm/sqlite-node` | `SqliteClient.layer({ filename })` |
+
+Core code depends only on Effect's generic `SqlClient`. Pick the dialect at the
+edge so Workers never pull in `node:sqlite`.
 
 ## Query API
 
@@ -75,28 +105,31 @@ orm.users.paginate(args)
 Selections return projected types instead of the full row:
 
 ```ts
-const users = await orm.users.findMany({
-  select: { id: true, email: true },
-});
+const users =
+  yield *
+  orm.users.findMany({
+    select: { id: true, email: true },
+  });
 // Array<{ id: string; email: string }>
 ```
 
-Writes use Kysely's inferred `Insertable` and `Updateable` types. Single-row writes return
-the affected row; `updateMany` and `deleteMany` return affected counts.
+Writes use ParanORM's `Insertable` and `Updateable` helpers. Single-row writes
+return the affected row; `updateMany` and `deleteMany` return affected counts.
 
 ### Filters
 
 Fields accept direct equality values or type-specific operators:
 
 ```ts
-await orm.users.findMany({
-  where: {
-    email: { endsWith: "@example.com" },
-    name: { notIn: ["Bot", "Deleted"] },
-    OR: [{ name: { startsWith: "A" } }, { name: { startsWith: "B" } }],
-    NOT: { email: { contains: "+blocked" } },
-  },
-});
+yield *
+  orm.users.findMany({
+    where: {
+      email: { endsWith: "@example.com" },
+      name: { notIn: ["Bot", "Deleted"] },
+      OR: [{ name: { startsWith: "A" } }, { name: { startsWith: "B" } }],
+      NOT: { email: { contains: "+blocked" } },
+    },
+  });
 ```
 
 Supported operators:
@@ -115,26 +148,32 @@ LIKE wildcards in user values are escaped automatically.
 Offset pagination:
 
 ```ts
-const page = await orm.posts.paginate({
-  orderBy: [{ id: "asc" }],
-  take: 20,
-  skip: 40,
-});
+const page =
+  yield *
+  orm.posts.paginate({
+    orderBy: [{ id: "asc" }],
+    take: 20,
+    skip: 40,
+  });
 ```
 
 Cursor pagination:
 
 ```ts
-const first = await orm.posts.paginate({
-  orderBy: [{ published_at: "desc" }, { id: "asc" }],
-  take: 20,
-});
+const first =
+  yield *
+  orm.posts.paginate({
+    orderBy: [{ published_at: "desc" }, { id: "asc" }],
+    take: 20,
+  });
 
-const next = await orm.posts.paginate({
-  orderBy: [{ published_at: "desc" }, { id: "asc" }],
-  take: 20,
-  after: first.pagination.endCursor!,
-});
+const next =
+  yield *
+  orm.posts.paginate({
+    orderBy: [{ published_at: "desc" }, { id: "asc" }],
+    take: 20,
+    after: first.pagination.endCursor!,
+  });
 ```
 
 The result includes `count`, `hasNext`, `hasPrevious`, `startCursor`, and `endCursor`.
@@ -145,12 +184,14 @@ Use either API:
 
 ```ts
 import { defineSchema, type InferDatabase, type InferSchema } from "paranorm";
+import type { Insertable, Selectable, Updateable } from "paranorm";
 
 const schema = defineSchema(yamlLiteral);
 type DB = InferSchema<typeof schema>;
 
-// Equivalent:
-type DBDirect = InferDatabase<typeof yamlLiteral>;
+type User = Selectable<DB["users"]>;
+type NewUser = Insertable<DB["users"]>;
+type UserUpdate = Updateable<DB["users"]>;
 ```
 
 Inference supports:
@@ -161,12 +202,8 @@ Inference supports:
 - String enum unions
 - `string`, integer, bigint, decimal, boolean, date, timestamp, JSON, and binary columns
 - Generated auth, API-key, file, and attachment tables
-- Kysely's `Selectable`, `Insertable`, and `Updateable` helpers
 
 ### Tagged YAML templates
-
-For IDE extensions that highlight tagged templates, use the exported `schema` tag directly
-or alias it to `yaml`:
 
 ```ts
 import { schema as yaml } from "paranorm";
@@ -181,59 +218,45 @@ function loadSchema() {
 }
 ```
 
-The tag uses [`dedent`](https://github.com/dmnd/dedent), so surrounding code indentation is
-removed automatically. Interpolations are rejected so the template always contains one complete schema document.
-TypeScript does not expose tagged-template contents as a string-literal type, so use
-`defineSchema(yamlLiteral)` when `InferSchema` compile-time inference is needed. A `const`
-string retains its literal type without an `as const` assertion.
-
-TypeScript can only infer a string known at compile time. A schema loaded with
-`Bun.file(...).text()` is a runtime `string` and requires generated declarations instead.
-Runtime parsing remains the authoritative schema validator.
+The tag uses [`dedent`](https://github.com/dmnd/dedent). Interpolations are
+rejected. TypeScript does not expose tagged-template text as a string-literal
+type, so use `defineSchema(yamlLiteral)` when compile-time inference is needed.
 
 See [SPEC.md](./SPEC.md) for the complete authoring format.
 
 ## Schema migrations
 
-`createMigrator` wraps Kysely's native `Migrator` and derives migration names from each
-schema's `_version`:
+`createMigrator` builds a forward-only schema-diff migrator over Effect
+`SqlClient` (works on both D1 and Node SQLite):
 
 ```ts
+import { Effect } from "effect";
 import { createMigrator, defineSchema } from "paranorm";
+import { SqliteClient } from "paranorm/sqlite-node";
 
 const v1 = defineSchema(`_version: "1.0.0"\nusers:\n  id: id\n`);
 const v2 = defineSchema(`_version: "2.0.0"\nusers:\n  id: id\n  email: string?\n`);
 
-const migrator = createMigrator(db, [v1, v2]);
+const migrator = createMigrator([v1, v2], {
+  table: "paranorm_migrations",
+  allowDestructive: false,
+});
 
-await migrator.plan(); // Pending structured operations
-await migrator.validate(); // Ordering and destructive-policy validation
-await migrator.sql(); // Compiled SQL without execution
-await migrator.migrateToLatest();
-await migrator.migrateUp();
-await migrator.migrateDown();
-await migrator.migrateTo("1.0.0");
+migrator.plan(); // Structured operations
+migrator.validate(); // Destructive-policy validation
+migrator.sql(); // Compiled SQL without execution
+
+await Effect.runPromise(
+  migrator.migrate.pipe(Effect.provide(SqliteClient.layer({ filename: "app.db" })), Effect.scoped),
+);
 ```
 
-It returns Kysely's actual `Migrator`, preserving its methods, locking, migration tables,
-and result/error behavior. Inputs may be typed schemas, YAML strings, or `{ name, content
-}` sources. A third argument accepts both schema options and Kysely migrator options:
+Or wire migrations into a layer:
 
 ```ts
-const migrator = createMigrator(db, [v1, v2], {
-  dialect: "postgres",
-  allowDestructive: false,
-  allowUnorderedMigrations: false,
-  migrationTableName: "paranorm_migration",
-  migrationLockTableName: "paranorm_migration_lock",
-});
+const SqlLive = Layer.provideMerge(migrator.layer, SqliteClient.layer({ filename: "app.db" }));
 ```
 
-`SchemaMigrationProvider` and `migrateSchemasToLatest` remain available as lower-level and
-compatibility APIs. Forward destructive changes require `allowDestructive: true`.
-Migration rendering supports `postgres`, `sqlite`, `mysql`, and `mssql` type/default
-variants. Dialect-specific `ALTER TABLE`, mutation `RETURNING`, and upsert limitations
-still apply.
-
-Schema errors include source locations when parsing strings. Named migration sources are
-reported as `name:line:column`.
+`SchemaMigrationProvider` and `migrateSchemasToLatest` remain available as
+lower-level APIs. Forward destructive changes require `allowDestructive: true`.
+DDL rendering targets SQLite (both runtime dialects).

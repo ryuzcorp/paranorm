@@ -2,21 +2,21 @@
 
 ## 1. Purpose
 
-ParanORM is a Kysely-focused toolkit with three connected surfaces:
+ParanORM is an Effect SQL toolkit with three connected surfaces:
 
 1. A YAML authoring format for immutable database schema versions.
-2. A typed model API created directly from `Kysely<DB>`.
-3. A schema-diff `MigrationProvider` and sugar around Kysely's native `Migrator`.
+2. A typed model API over Effect `SqlClient` (D1 or Node SQLite).
+3. A forward-only schema-diff migrator that emits SQLite DDL as Effects.
 
-ParanORM is not a replacement for Kysely. The Kysely database type remains authoritative,
-raw Kysely queries remain available, and ParanORM's migrator preserves Kysely's locking,
-history tables, methods, and result types.
+ParanORM is not a replacement for Effect SQL. Provide `@effect/sql-d1` or
+`@effect/sql-sqlite-node` at the edge; core queries only require `SqlClient`.
 
 ## 2. Canonical usage
 
 ```ts
-import { Kysely } from "kysely";
+import { Effect } from "effect";
 import { paranorm, createMigrator, defineSchema, type InferSchema } from "paranorm";
+import { SqliteClient } from "paranorm/sqlite-node";
 
 const schemaV1 = defineSchema(`
   _version: "1.0.0"
@@ -28,9 +28,13 @@ const schemaV1 = defineSchema(`
 
 type DB = InferSchema<typeof schemaV1>;
 
-const db = new Kysely<DB>({ dialect });
-const orm = paranorm(db);
-const migrator = createMigrator(db, [schemaV1], { dialect: "postgres" });
+const orm = paranorm<DB>();
+const migrator = createMigrator([schemaV1]);
+
+const program = Effect.gen(function* () {
+  yield* migrator.migrate;
+  return yield* orm.users.findMany();
+}).pipe(Effect.provide(SqliteClient.layer({ filename: "app.db" })), Effect.scoped);
 ```
 
 `defineSchema` removes common indentation at runtime and at the type level.
@@ -95,7 +99,7 @@ A column is a string containing one base type followed by modifiers:
 
 ### 4.1 Base types
 
-| Type             | Kysely value                                   |
+| Type             | Selected value                                 |
 | ---------------- | ---------------------------------------------- |
 | `id`             | Generated string primary key                   |
 | `id(varchar(n))` | Generated string primary key with custom size  |
@@ -188,7 +192,7 @@ type DB2 = InferDatabase<typeof yamlLiteral>;
 ```
 
 Inference covers tables, columns, references, defaults, generated IDs, nullability,
-enums, auth, files, and Kysely's `Selectable`, `Insertable`, and `Updateable` behavior.
+enums, auth, files, and ParanORM's `Selectable`, `Insertable`, and `Updateable` helpers.
 
 The `schema` tagged template is a dedented runtime authoring helper and may be aliased to
 `yaml`. TypeScript does not expose tagged-template static segments as literal tuple types,
@@ -197,10 +201,11 @@ so `InferSchema` inference requires `defineSchema(...)` with a literal or `const
 ## 8. Query model API
 
 ```ts
-const orm = paranorm(db);
+const orm = paranorm<DB>();
 ```
 
-`paranorm` accepts only `Kysely<DB>`. A lazy proxy creates one model per accessed table.
+`paranorm` creates a lazy proxy of models. Each method returns an Effect requiring
+`SqlClient` from `effect/unstable/sql`.
 
 Each model provides:
 
@@ -214,15 +219,17 @@ Each model provides:
 Selections produce projected result types:
 
 ```ts
-const rows = await orm.users.findMany({
-  select: { id: true, email: true },
-});
+const rows =
+  yield *
+  orm.users.findMany({
+    select: { id: true, email: true },
+  });
 // Array<{ id: string; email: string }>
 ```
 
-Writes use Kysely's `Insertable<Table>` and `Updateable<Table>` types. Single-row writes
-return the affected row or throw `ParanOrmError("NOT_FOUND")`. Mutation returning and upsert
-support remain subject to the configured SQL dialect.
+Writes use ParanORM's `Insertable<Table>` and `Updateable<Table>` types. Single-row writes
+return the affected row or fail with `ParanOrmError("NOT_FOUND")`. Mutation `RETURNING` and
+upsert use SQLite semantics shared by D1 and Node SQLite.
 
 Filters support direct equality, `AND`/`OR`/`NOT`, string matching, comparisons, sets, and
 null checks. LIKE wildcard input is escaped. Pagination supports offset and multi-column
@@ -231,31 +238,30 @@ keyset cursors.
 ## 9. Migrations
 
 ```ts
-const migrator = createMigrator(db, [schemaV1, schemaV2], {
-  dialect: "postgres",
+const migrator = createMigrator([schemaV1, schemaV2], {
+  table: "paranorm_migrations",
   allowDestructive: false,
 });
 
-await migrator.plan();
-await migrator.validate();
-await migrator.sql();
-await migrator.migrateToLatest();
-await migrator.migrateDown();
+migrator.plan();
+migrator.validate();
+migrator.sql();
+yield * migrator.migrate;
 ```
 
-`createMigrator` returns Kysely's `Migrator` enhanced with:
+`createMigrator` returns:
 
-- `plan()` — pending schema operations with destructive flags.
-- `validate()` — validates pending history and destructive-change policy.
-- `sql()` — dialect-compiled SQL and parameters without applying migrations.
+- `plan()` — schema operations with destructive flags.
+- `validate()` — validates destructive-change policy.
+- `sql()` — compiled SQL and parameters without applying migrations.
+- `migrate` — Effect that applies pending migrations (D1-safe: no transaction wrapper).
+- `layer` / `loader` — for composing with Effect layers and `Migrator.fromRecord`.
 
 Inputs may be typed schemas, YAML strings, or `{ name, content }`. Names default to
 `_version`. Low-level `SchemaMigrationProvider` and `applySchemaDiff` remain public.
 
-Supported migration dialect options are `postgres`, `sqlite`, `mysql`, and `mssql`.
-Dialect rendering currently covers JSON, binary, UUID, auto-increment IDs, UUID defaults,
-and portable current-timestamp defaults. Dialect-specific `ALTER TABLE`, `RETURNING`, and
-upsert limitations still apply.
+Migration DDL targets SQLite. Runtime dialect choice (`paranorm/d1` vs
+`paranorm/sqlite-node`) does not change rendered SQL.
 
 ## 10. Diagnostics
 
@@ -273,16 +279,15 @@ source locations unless the caller retains and supplies their text.
 
 Tables are created in foreign-key dependency order and removed in reverse order. Cyclic
 foreign keys are rejected. Indexes and constraints are removed before destructive column
-operations. Forward destructive migrations require `allowDestructive: true`; down
-migrations enable destructive reversal automatically.
+operations. Forward destructive migrations require `allowDestructive: true`. Migrations
+are forward-only.
 
 ## 12. Next additions (5–10)
 
 ### 5. Complete dialect hardening
 
-Add dialect capability checks, native integration suites for PostgreSQL/MySQL/MSSQL, safe
-SQLite table-rebuild migrations, and explicit errors for unsupported `RETURNING`, upsert,
-constraint, and alter-column operations.
+Add safe SQLite table-rebuild migrations for unsupported `ALTER` operations, and explicit
+errors for constraint/alter-column cases that SQLite cannot express in place.
 
 ### 6. Aggregates and grouping
 
@@ -296,8 +301,8 @@ Allow typed reusable `where`, selection, and ordering fragments that can be shar
 
 ### 8. Transaction ergonomics
 
-Document and test `paranorm(trx)` with Kysely transactions, and add an optional helper
-that scopes a ParanORM instance to a transaction callback.
+Document and test `sql.withTransaction` with ParanORM Effects on Node SQLite, and note D1
+batch semantics as the atomic alternative.
 
 ### 9. CLI tooling
 

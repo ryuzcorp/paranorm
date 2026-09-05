@@ -1,9 +1,13 @@
-import { Database } from "bun:sqlite";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { beforeAll, describe, expect, expectTypeOf, test } from "bun:test";
+import { Effect, Layer } from "effect";
+import { SqliteClient } from "@effect/sql-sqlite-node";
+import type { SqlClient } from "effect/unstable/sql/SqlClient";
 
-import { type Generated, Kysely, SqliteDialect } from "kysely";
-
-import { paranorm, ParanOrmError } from "./index.ts";
+import { type Generated, paranorm, ParanOrmError } from "./index.ts";
 
 interface DB {
   author: { id: Generated<number>; name: string; email: string };
@@ -12,181 +16,218 @@ interface DB {
   post_tag: { postId: number; tagId: number };
 }
 
-function fixture() {
-  const sqlite = new Database(":memory:");
-  sqlite.exec(`
-		create table author (id integer primary key autoincrement, name text not null, email text not null unique);
-		create table post (id integer primary key autoincrement, title text not null, body text, authorId integer not null);
-		create table tag (id integer primary key autoincrement, name text not null);
-		create table post_tag (postId integer not null, tagId integer not null);
-	`);
-  const compatibleDatabase = {
-    close: () => sqlite.close(),
-    prepare: (query: string) => {
-      const statement = sqlite.prepare(query);
-      return {
-        reader: /^\s*(select|pragma|with)\b/i.test(query) || /\breturning\b/i.test(query),
-        all: (parameters: readonly unknown[]) => statement.all(...(parameters as never[])),
-        run: (parameters: readonly unknown[]) => statement.run(...(parameters as never[])),
-        iterate: (parameters: readonly unknown[]) => statement.iterate(...(parameters as never[])),
-      };
-    },
-  };
-  const dialectConfig = { database: compatibleDatabase } as unknown as ConstructorParameters<
-    typeof SqliteDialect
-  >[0];
-  const db = new Kysely<DB>({ dialect: new SqliteDialect(dialectConfig) });
-  const query = paranorm(db);
-  return { db, query };
+function sqliteLayer(filename = ":memory:") {
+  return SqliteClient.layer({ filename, disableWAL: true }) as Layer.Layer<
+    SqlClient | SqliteClient.SqliteClient
+  >;
+}
+
+function run<A, E>(
+  effect: Effect.Effect<A, E, SqlClient>,
+  layer: Layer.Layer<SqlClient | SqliteClient.SqliteClient> = sqliteLayer(),
+) {
+  return Effect.runPromise(effect.pipe(Effect.provide(layer), Effect.scoped));
+}
+
+function createSchema() {
+  return Effect.gen(function* () {
+    const sql = yield* SqliteClient.SqliteClient;
+    yield* sql`
+      CREATE TABLE author (
+        id integer primary key autoincrement,
+        name text not null,
+        email text not null unique
+      )
+    `;
+    yield* sql`
+      CREATE TABLE post (
+        id integer primary key autoincrement,
+        title text not null,
+        body text,
+        authorId integer not null
+      )
+    `;
+    yield* sql`
+      CREATE TABLE tag (
+        id integer primary key autoincrement,
+        name text not null
+      )
+    `;
+    yield* sql`
+      CREATE TABLE post_tag (
+        postId integer not null,
+        tagId integer not null
+      )
+    `;
+  });
 }
 
 describe("ParanOrm", () => {
-  let setup: ReturnType<typeof fixture>;
+  const query = paranorm<DB>();
+  const dbFile = join(mkdtempSync(join(tmpdir(), "paranorm-")), "shared.db");
+  const shared = sqliteLayer(dbFile);
   let aliceId: number;
   let firstPostId: number;
 
   beforeAll(async () => {
-    setup = fixture();
-    const [alice, bob] = await setup.db
-      .insertInto("author")
-      .values([
-        { name: "Alice", email: "alice@acme.com" },
-        { name: "Bob", email: "bob@example.com" },
-      ])
-      .returningAll()
-      .execute();
-    aliceId = alice!.id;
-    const posts = await setup.db
-      .insertInto("post")
-      .values([
-        { title: "First", body: null, authorId: aliceId },
-        { title: "Second", body: "text", authorId: aliceId },
-        { title: "Bob post", body: null, authorId: bob!.id },
-      ])
-      .returningAll()
-      .execute();
-    firstPostId = posts[0]!.id;
-    const tags = await setup.db
-      .insertInto("tag")
-      .values([{ name: "ts" }, { name: "sql" }])
-      .returningAll()
-      .execute();
-    await setup.db
-      .insertInto("post_tag")
-      .values(tags.map((tag) => ({ postId: firstPostId, tagId: tag.id })))
-      .execute();
+    await run(
+      Effect.gen(function* () {
+        yield* createSchema();
+        const sql = yield* SqliteClient.SqliteClient;
+        const authors = yield* sql<{ id: number }>`
+          INSERT INTO author ${sql
+            .insert([
+              { name: "Alice", email: "alice@acme.com" },
+              { name: "Bob", email: "bob@example.com" },
+            ])
+            .returning("id")}
+        `;
+        aliceId = authors[0]!.id;
+        const posts = yield* sql<{ id: number }>`
+          INSERT INTO post ${sql
+            .insert([
+              { title: "First", body: null, authorId: aliceId },
+              { title: "Second", body: "text", authorId: aliceId },
+              { title: "Bob post", body: null, authorId: authors[1]!.id },
+            ])
+            .returning("id")}
+        `;
+        firstPostId = posts[0]!.id;
+        const tags = yield* sql<{ id: number }>`
+          INSERT INTO tag ${sql.insert([{ name: "ts" }, { name: "sql" }]).returning("id")}
+        `;
+        yield* sql`
+          INSERT INTO post_tag ${sql.insert(
+            tags.map((tag) => ({ postId: firstPostId, tagId: tag.id })),
+          )}
+        `;
+      }),
+      shared,
+    );
   });
 
-  test("creates typed models implicitly from Kysely", async () => {
-    const alice = await setup.query.author.findFirst({ where: { email: "alice@acme.com" } });
+  test("creates typed models implicitly from SqlClient", async () => {
+    const alice = await run(query.author.findFirst({ where: { email: "alice@acme.com" } }), shared);
     expect(alice?.name).toBe("Alice");
-    expect(await setup.query.post.count()).toBe(3);
+    expect(await run(query.post.count(), shared)).toBe(3);
   });
 
   test("finds, filters, orders, and selects", async () => {
-    const rows = await setup.query.author.findMany({
-      where: { OR: [{ name: { startsWith: "Ali" } }, { email: { endsWith: "example.com" } }] },
-      orderBy: [{ name: "asc" }],
-      select: { id: true, name: true },
-    });
+    const rows = await run(
+      query.author.findMany({
+        where: { OR: [{ name: { startsWith: "Ali" } }, { email: { endsWith: "example.com" } }] },
+        orderBy: [{ name: "asc" }],
+        select: { id: true, name: true },
+      }),
+      shared,
+    );
     expectTypeOf(rows).toEqualTypeOf<Array<{ id: number; name: string }>>();
     expect(rows.map((row) => row.name)).toEqual(["Alice", "Bob"]);
     expect(rows[0]).not.toHaveProperty("email");
   });
 
   test("creates, updates, upserts, and deletes with inferred types", async () => {
-    const local = fixture();
-    const alice = await local.query.author.create({
-      data: { name: "Alice", email: "alice@example.com" },
-    });
-    expectTypeOf(alice).toEqualTypeOf<{ id: number; name: string; email: string }>();
+    await run(
+      Effect.gen(function* () {
+        yield* createSchema();
+        const alice = yield* query.author.create({
+          data: { name: "Alice", email: "alice@example.com" },
+        });
+        expectTypeOf(alice).toEqualTypeOf<{ id: number; name: string; email: string }>();
 
-    const created = await local.query.author.createMany({
-      data: [
-        { name: "Bob", email: "bob@example.com" },
-        { name: "Carol", email: "carol@example.com" },
-      ],
-    });
-    expect(created).toHaveLength(2);
+        const created = yield* query.author.createMany({
+          data: [
+            { name: "Bob", email: "bob@example.com" },
+            { name: "Carol", email: "carol@example.com" },
+          ],
+        });
+        expect(created).toHaveLength(2);
 
-    const updated = await local.query.author.update({
-      where: { id: alice.id },
-      data: { name: "Alicia" },
-    });
-    expect(updated.name).toBe("Alicia");
-    expect(await local.query.author.updateMany({ data: { name: "Member" } })).toBe(3);
+        const updated = yield* query.author.update({
+          where: { id: alice.id },
+          data: { name: "Alicia" },
+        });
+        expect(updated.name).toBe("Alicia");
+        expect(yield* query.author.updateMany({ data: { name: "Member" } })).toBe(3);
 
-    const upserted = await local.query.author.upsert({
-      where: { email: "alice@example.com" },
-      create: { name: "Unused", email: "alice@example.com" },
-      update: { name: "Alice Again" },
-    });
-    expect(upserted.name).toBe("Alice Again");
+        const upserted = yield* query.author.upsert({
+          where: { email: "alice@example.com" },
+          create: { name: "Unused", email: "alice@example.com" },
+          update: { name: "Alice Again" },
+        });
+        expect(upserted.name).toBe("Alice Again");
 
-    expect((await local.query.author.delete({ where: { id: created[0]!.id } })).id).toBe(
-      created[0]!.id,
+        expect((yield* query.author.delete({ where: { id: created[0]!.id } })).id).toBe(
+          created[0]!.id,
+        );
+        expect(
+          yield* query.author.deleteMany({ where: { email: { endsWith: "example.com" } } }),
+        ).toBe(2);
+      }),
     );
-    expect(
-      await local.query.author.deleteMany({ where: { email: { endsWith: "example.com" } } }),
-    ).toBe(2);
-    await local.db.destroy();
   });
 
   test("escapes LIKE wildcard input", async () => {
-    expect(await setup.query.author.findMany({ where: { email: { contains: "%" } } })).toHaveLength(
-      0,
-    );
+    expect(
+      await run(query.author.findMany({ where: { email: { contains: "%" } } }), shared),
+    ).toHaveLength(0);
   });
 
   test("supports null filters, count, and exists", async () => {
-    expect(await setup.query.post.count({ where: { body: { isNull: true } } })).toBe(2);
-    expect(await setup.query.author.exists({ where: { name: "Alice" } })).toBe(true);
+    expect(await run(query.post.count({ where: { body: { isNull: true } } }), shared)).toBe(2);
+    expect(await run(query.author.exists({ where: { name: "Alice" } }), shared)).toBe(true);
   });
 
   test("findUnique throws a typed error", async () => {
     expect(
-      setup.query.author.findUnique({ where: { email: "missing@example.com" } }),
+      run(query.author.findUnique({ where: { email: "missing@example.com" } }), shared),
     ).rejects.toBeInstanceOf(ParanOrmError);
   });
 
   test("supports offset and cursor pagination", async () => {
-    const first = await setup.query.post.paginate({ orderBy: [{ id: "asc" }], take: 2 });
+    const first = await run(query.post.paginate({ orderBy: [{ id: "asc" }], take: 2 }), shared);
     expect(first.data).toHaveLength(2);
-    const second = await setup.query.post.paginate({
-      orderBy: [{ id: "asc" }],
-      take: 2,
-      after: first.pagination.endCursor!,
-    });
+    const second = await run(
+      query.post.paginate({
+        orderBy: [{ id: "asc" }],
+        take: 2,
+        after: first.pagination.endCursor!,
+      }),
+      shared,
+    );
     expect(second.data).toHaveLength(1);
     expect(second.data[0]!.id).not.toBe(first.data[0]!.id);
   });
 
   test("round-trips Unicode cursor values", async () => {
-    const local = fixture();
-    const author = await local.query.author.create({
-      data: { name: "Author", email: "author@example.com" },
-    });
-    await local.query.post.createMany({
-      data: [
-        { title: "日本語", body: null, authorId: author.id },
-        { title: "🦊 fox", body: null, authorId: author.id },
-      ],
-    });
+    await run(
+      Effect.gen(function* () {
+        yield* createSchema();
+        const author = yield* query.author.create({
+          data: { name: "Author", email: "author@example.com" },
+        });
+        yield* query.post.createMany({
+          data: [
+            { title: "日本語", body: null, authorId: author.id },
+            { title: "🦊 fox", body: null, authorId: author.id },
+          ],
+        });
 
-    const first = await local.query.post.paginate({ orderBy: [{ title: "asc" }], take: 1 });
-    const second = await local.query.post.paginate({
-      orderBy: [{ title: "asc" }],
-      take: 1,
-      after: first.pagination.endCursor!,
-    });
-    expect(second.data).toHaveLength(1);
-    expect(second.data[0]!.title).not.toBe(first.data[0]!.title);
-    await local.db.destroy();
+        const first = yield* query.post.paginate({ orderBy: [{ title: "asc" }], take: 1 });
+        const second = yield* query.post.paginate({
+          orderBy: [{ title: "asc" }],
+          take: 1,
+          after: first.pagination.endCursor!,
+        });
+        expect(second.data).toHaveLength(1);
+        expect(second.data[0]!.title).not.toBe(first.data[0]!.title);
+      }),
+    );
   });
 
   test("rejects malformed cursors", async () => {
     expect(
-      setup.query.post.paginate({ orderBy: [{ id: "asc" }], take: 2, after: "bad" }),
+      run(query.post.paginate({ orderBy: [{ id: "asc" }], take: 2, after: "bad" }), shared),
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 });

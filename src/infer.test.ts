@@ -1,12 +1,13 @@
 import { describe, expect, expectTypeOf, test } from "bun:test";
 
-import type { Insertable, Kysely, Selectable, Updateable } from "kysely";
-
 import {
   defineSchema,
   type InferSchema,
   type InferDatabase,
+  type Insertable,
   type JSONValue,
+  type Selectable,
+  type Updateable,
   schema as yamlSchema,
 } from "./index.ts";
 
@@ -33,14 +34,6 @@ type Post = Selectable<DB["posts"]>;
 type NewPost = Insertable<DB["posts"]>;
 type PostUpdate = Updateable<DB["posts"]>;
 
-// Compile-only integration: inferred table and column names flow through Kysely.
-function kyselyQueries(db: Kysely<DB>) {
-  void db.selectFrom("posts").select(["posts.id", "posts.title"]).where("status", "=", "published");
-  void db.insertInto("posts").values({ author_id: "user-id", title: "Hello" });
-  void db.updateTable("posts").set({ published_at: new Date() }).where("id", "=", "42");
-}
-void kyselyQueries;
-
 function interpolationIsRejected(value: string) {
   // @ts-expect-error Schema interpolation is intentionally unsupported.
   return yamlSchema`_version: "1.0.0"\n${value}`;
@@ -62,7 +55,7 @@ describe("YAML schema type inference", () => {
     }>();
   });
 
-  test("infers Kysely select, insert, and update types", () => {
+  test("infers select, insert, and update types", () => {
     expectTypeOf<Post["id"]>().toEqualTypeOf<string>();
     expectTypeOf<Post["author_id"]>().toEqualTypeOf<string>();
     expectTypeOf<Post["status"]>().toEqualTypeOf<"draft" | "published">();

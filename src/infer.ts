@@ -1,6 +1,6 @@
 import dedent from "dedent";
-import type { ColumnType, Generated } from "kysely";
 
+import type { ColumnType, Generated } from "./column-type.ts";
 import { parseSchema } from "./parser.ts";
 import type { AuthoredSchema } from "./types.ts";
 
@@ -301,7 +301,7 @@ type SelectValue<Tables, Definition extends string> =
   IsNullable<Definition> extends true
     ? Scalar<Tables, Definition> | null
     : Scalar<Tables, Definition>;
-type KyselyColumn<Tables, Definition extends string> =
+type SchemaColumn<Tables, Definition extends string> =
   IsGenerated<Definition> extends true
     ? Generated<SelectValue<Tables, Definition>>
     : IsNullable<Definition> extends true
@@ -316,13 +316,13 @@ type KyselyColumn<Tables, Definition extends string> =
           SelectValue<Tables, Definition>
         >;
 
-/** Infers the Kysely `Database` interface from a literal YAML schema string. */
+/** Infers the database interface from a literal YAML schema string. */
 export type InferDatabase<Source extends string> = {
   [Table in keyof RawTables<DedentSource<Source>>]: {
     [Column in keyof RawTables<DedentSource<Source>>[Table]]: RawTables<
       DedentSource<Source>
     >[Table][Column] extends string
-      ? KyselyColumn<
+      ? SchemaColumn<
           RawTables<DedentSource<Source>>,
           RawTables<DedentSource<Source>>[Table][Column]
         >
@@ -330,14 +330,14 @@ export type InferDatabase<Source extends string> = {
   };
 };
 
-/** A parsed runtime schema carrying its inferred Kysely database type. */
+/** A parsed runtime schema carrying its inferred database type. */
 export type TypedSchema<Source extends string> = AuthoredSchema & {
   readonly source: Source;
   readonly $database: InferDatabase<Source>;
 };
 
 /**
- * Parses a literal YAML schema and preserves enough type information for Kysely.
+ * Parses a literal YAML schema and preserves enough type information for the ORM.
  * Keep the argument inline or use `as const`; a widened `string` cannot be inferred.
  */
 export function defineSchema<const Source extends string>(

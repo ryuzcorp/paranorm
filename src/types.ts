@@ -1,5 +1,3 @@
-import type { Kysely } from "kysely";
-
 export const COLUMN_TYPES = [
   "id",
   "string",
@@ -102,4 +100,3 @@ export interface SchemaDiff {
 export interface ApplySchemaOptions {
   allowDestructive?: boolean;
 }
-export type SchemaMigrationDatabase = Kysely<any>;
