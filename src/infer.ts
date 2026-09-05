@@ -13,46 +13,71 @@ export type JSONValue =
   | JSONValue[]
   | { [key: string]: JSONValue };
 
-type TrimLeft<S extends string> = S extends ` ${infer R}` | `\t${infer R}` ? TrimLeft<R> : S;
-type TrimRight<S extends string> = S extends `${infer R} ` | `${infer R}\t` | `${infer R}\r`
-  ? TrimRight<R>
-  : S;
+/** Empty table map default for keyof merging without using the `{}` type. */
+type EmptyTableMap = Record<never, never>;
+
+type TrimLeft<S extends string> = S extends ` ${infer TrimLeftRest}`
+  ? TrimLeft<TrimLeftRest>
+  : S extends `\t${infer TrimLeftRest}`
+    ? TrimLeft<TrimLeftRest>
+    : S;
+type TrimRight<S extends string> = S extends `${infer TrimRightRest} `
+  ? TrimRight<TrimRightRest>
+  : S extends `${infer TrimRightRest}\t`
+    ? TrimRight<TrimRightRest>
+    : S extends `${infer TrimRightRest}\r`
+      ? TrimRight<TrimRightRest>
+      : S;
 type Trim<S extends string> = TrimLeft<TrimRight<S>>;
-type DropLeadingBlankLines<S extends string> = S extends `\r\n${infer R}` | `\n${infer R}`
-  ? DropLeadingBlankLines<R>
-  : S;
-type LeadingIndent<S extends string, Prefix extends string = ""> = S extends ` ${infer R}`
-  ? LeadingIndent<R, `${Prefix} `>
-  : S extends `\t${infer R}`
-    ? LeadingIndent<R, `${Prefix}\t`>
+type DropLeadingBlankLines<S extends string> =
+  S extends `\r\n${infer DropLeadingRest}`
+    ? DropLeadingBlankLines<DropLeadingRest>
+    : S extends `\n${infer DropLeadingRest}`
+      ? DropLeadingBlankLines<DropLeadingRest>
+      : S;
+type LeadingIndent<
+  S extends string,
+  Prefix extends string = "",
+> = S extends ` ${infer LeadingIndentSpaceRest}`
+  ? LeadingIndent<LeadingIndentSpaceRest, `${Prefix} `>
+  : S extends `\t${infer LeadingIndentTabRest}`
+    ? LeadingIndent<LeadingIndentTabRest, `${Prefix}\t`>
     : Prefix;
 type StripIndent<Line extends string, Prefix extends string> = Prefix extends ""
   ? Line
-  : Line extends `${Prefix}${infer R}`
-    ? R
+  : Line extends `${Prefix}${infer StripIndentRest}`
+    ? StripIndentRest
     : Line;
 type StripLineIndent<
   S extends string,
   Prefix extends string,
-> = S extends `${infer Line}\n${infer Rest}`
-  ? `${StripIndent<Line, Prefix>}\n${StripLineIndent<Rest, Prefix>}`
+> = S extends `${infer StripLineLine}\n${infer StripLineRest}`
+  ? `${StripIndent<StripLineLine, Prefix>}\n${StripLineIndent<StripLineRest, Prefix>}`
   : StripIndent<S, Prefix>;
 type DedentSource<Source extends string> =
   DropLeadingBlankLines<Source> extends infer Content extends string
     ? StripLineIndent<Content, LeadingIndent<Content>>
     : Source;
-type BeforeComment<S extends string> = S extends `${infer V}#${string}` ? TrimRight<V> : S;
+type BeforeComment<S extends string> = S extends `${infer V}#${string}`
+  ? TrimRight<V>
+  : S;
 type Merge<A, B> = Omit<A, keyof B> & B;
 type AddTable<Tables, Name extends string> = Name extends keyof Tables
   ? Tables
-  : Tables & Record<Name, {}>;
+  : Tables & { [K in Name]: EmptyTableMap };
 type AddColumn<
   Tables,
   Table extends string,
   Name extends string,
   Def extends string,
 > = Table extends keyof Tables
-  ? Merge<Tables, Record<Table, Merge<Tables[Table], Record<Name, Trim<BeforeComment<Def>>>>>>
+  ? Merge<
+      Tables,
+      Record<
+        Table,
+        Merge<Tables[Table], Record<Name, Trim<BeforeComment<Def>>>>
+      >
+    >
   : Tables;
 
 type ParseLine<Line extends string, Tables, Current extends string | never> =
@@ -78,7 +103,7 @@ type ParseLine<Line extends string, Tables, Current extends string | never> =
 
 type ParseExplicitTables<
   Source extends string,
-  Tables = {},
+  Tables = EmptyTableMap,
   Current extends string | never = never,
 > = Source extends `${infer Line}\n${infer Rest}`
   ? ParseLine<Line, Tables, Current> extends [
@@ -99,18 +124,24 @@ type SourceLineValue<
   : Trim<BeforeComment<Source>> extends `${Key}:${infer Value}`
     ? Trim<Value>
     : never;
-type ListItems<Value extends string> = Value extends `[${infer Items}]` ? SplitComma<Items> : never;
+type ListItems<Value extends string> = Value extends `[${infer Items}]`
+  ? SplitComma<Items>
+  : never;
 type SplitComma<S extends string> = S extends `${infer Head},${infer Tail}`
   ? Trim<Head> | SplitComma<Tail>
   : Trim<S>;
-type Extensions<Source extends string> = ListItems<SourceLineValue<Source, "_extends">>;
+type Extensions<Source extends string> = ListItems<
+  SourceLineValue<Source, "_extends">
+>;
 type HasExtension<Source extends string, Name extends string> =
   Name extends Extensions<Source> ? true : false;
 
-type AuthRoleDefinition<Source extends string> = [SourceLineValue<Source, "roles">] extends [never]
+type AuthRoleDefinition<Source extends string> = [
+  SourceLineValue<Source, "roles">,
+] extends [never]
   ? "string default=user"
   : `string default=user enum=${SourceLineValue<Source, "roles">} multiple`;
-type AuthRaw<Source extends string> = {
+interface AuthRaw<Source extends string> {
   user: {
     id: "id";
     name: "string";
@@ -158,8 +189,8 @@ type AuthRaw<Source extends string> = {
     createdAt: "timestamp default=now";
     updatedAt: "timestamp default=now";
   };
-};
-type ApiKeyRaw = {
+}
+interface ApiKeyRaw {
   apikey: {
     id: "id";
     configId: "string default=default";
@@ -184,18 +215,23 @@ type ApiKeyRaw = {
     createdAt: "timestamp default=now";
     updatedAt: "timestamp default=now";
   };
-};
-type ApiKeysEnabled<Source extends string> = [SourceLineValue<Source, "api_keys">] extends [never]
+}
+type ApiKeysEnabled<Source extends string> = [
+  SourceLineValue<Source, "api_keys">,
+] extends [never]
   ? false
   : SourceLineValue<Source, "api_keys"> extends "true"
     ? true
     : false;
 type AuthTables<Source extends string> =
   HasExtension<Source, "auth"> extends true
-    ? Merge<AuthRaw<Source>, ApiKeysEnabled<Source> extends true ? ApiKeyRaw : {}>
-    : {};
+    ? Merge<
+        AuthRaw<Source>,
+        ApiKeysEnabled<Source> extends true ? ApiKeyRaw : EmptyTableMap
+      >
+    : EmptyTableMap;
 
-type FileRaw<Owned extends boolean> = {
+interface FileRaw<Owned extends boolean> {
   file: Merge<
     {
       id: "id";
@@ -206,9 +242,9 @@ type FileRaw<Owned extends boolean> = {
       createdAt: "timestamp default=now";
       updatedAt: "timestamp default=now";
     },
-    Owned extends true ? { userId: "references=user.id" } : {}
+    Owned extends true ? { userId: "references=user.id" } : EmptyTableMap
   >;
-};
+}
 type AttachmentRaw<Entity extends string> = Record<
   `${Entity}_file`,
   {
@@ -223,8 +259,10 @@ type AttachmentRaw<Entity extends string> = Record<
 >;
 type AttachmentTables<Entities extends string> = Entities extends unknown
   ? AttachmentRaw<Entities>
-  : {};
-type FilesOwned<Source extends string> = [SourceLineValue<Source, "owner">] extends [never]
+  : EmptyTableMap;
+type FilesOwned<Source extends string> = [
+  SourceLineValue<Source, "owner">,
+] extends [never]
   ? true
   : SourceLineValue<Source, "owner"> extends "false"
     ? false
@@ -235,15 +273,14 @@ type FilesTables<Source extends string> =
         FileRaw<FilesOwned<Source>>,
         AttachmentTables<ListItems<SourceLineValue<Source, "attach_to">>>
       >
-    : {};
+    : EmptyTableMap;
 
 type RawTables<Source extends string> = Merge<
   Merge<AuthTables<Source>, FilesTables<Source>>,
   ParseExplicitTables<Source>
 >;
-type FirstToken<Definition extends string> = Definition extends `${infer Token} ${string}`
-  ? Token
-  : Definition;
+type FirstToken<Definition extends string> =
+  Definition extends `${infer Token} ${string}` ? Token : Definition;
 type IsNullable<Definition extends string> =
   FirstToken<Definition> extends `${string}?` ? true : false;
 type IsGenerated<Definition extends string> =
@@ -253,7 +290,9 @@ type IsGenerated<Definition extends string> =
       ? true
       : false;
 type EnumValues<Definition extends string> =
-  Definition extends `${string}enum=[${infer Values}]${string}` ? SplitComma<Values> : never;
+  Definition extends `${string}enum=[${infer Values}]${string}`
+    ? SplitComma<Values>
+    : never;
 type ReferenceTarget<Definition extends string> =
   Definition extends `${string}references=${infer Target} ${string}`
     ? Target
@@ -292,7 +331,9 @@ type ReferencedScalar<
       : unknown
     : unknown
   : unknown;
-type Scalar<Tables, Definition extends string> = [EnumValues<Definition>] extends [never]
+type Scalar<Tables, Definition extends string> = [
+  EnumValues<Definition>,
+] extends [never]
   ? [ReferenceTarget<Definition>] extends [never]
     ? ScalarFromToken<FirstToken<Definition>>
     : ReferencedScalar<Tables, ReferenceTarget<Definition>>
@@ -340,16 +381,18 @@ export type TypedSchema<Source extends string> = AuthoredSchema & {
  * Parses a literal YAML schema and preserves enough type information for the ORM.
  * Keep the argument inline or use `as const`; a widened `string` cannot be inferred.
  */
-export function defineSchema<const Source extends string>(
-  source: Source,
-): TypedSchema<DedentSource<Source>> {
-  const normalized = (
-    /^(?:\r?\n|[ \t])/.test(source) ? dedent(source) : source
-  ) as DedentSource<Source>;
-  return Object.assign(parseSchema(normalized), { source: normalized }) as TypedSchema<
-    DedentSource<Source>
-  >;
-}
+export const defineSchema = <const Source extends string>(
+  source: Source
+): TypedSchema<DedentSource<Source>> => {
+  const dedented = /^(?:\r?\n|[ \t])/u.test(source) ? dedent(source) : source;
+  // SAFETY: dedent preserves the schema source shape; only leading whitespace is removed.
+  const normalized = dedented as DedentSource<Source>;
+  const parsed = Object.assign(parseSchema(normalized), {
+    source: normalized,
+  });
+  // SAFETY: parseSchema returns AuthoredSchema; source ties the result to Source for inference.
+  return parsed as TypedSchema<DedentSource<Source>>;
+};
 
 /** Runtime schema returned by the YAML tagged template. */
 export type TaggedSchema = AuthoredSchema & { readonly source: string };
@@ -362,9 +405,17 @@ export type TaggedSchema = AuthoredSchema & { readonly source: string };
  * type therefore deliberately does not pretend to support `InferSchema`; use
  * `defineSchema(yaml as const)` when compile-time inference is required.
  */
-export function schema(strings: TemplateStringsArray, ...values: never[]): TaggedSchema;
-export function schema(strings: TemplateStringsArray, ...values: unknown[]): TaggedSchema {
-  if (values.length) throw new Error("schema tagged templates do not support interpolation");
+export function schema(
+  strings: TemplateStringsArray,
+  ...values: never[]
+): TaggedSchema;
+export function schema(
+  strings: TemplateStringsArray,
+  ...values: unknown[]
+): TaggedSchema {
+  if (values.length) {
+    throw new Error("schema tagged templates do not support interpolation");
+  }
   const source = dedent(strings[0] ?? "");
   return Object.assign(parseSchema(source), { source });
 }

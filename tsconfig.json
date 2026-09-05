@@ -4,6 +4,8 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "noPropertyAccessFromIndexSignature": false,
-    "types": ["bun", "node"]
-  }
+    "types": ["bun", "node"],
+    "strictNullChecks": true
+  },
+  "exclude": ["oxlint.config.ts", "oxfmt.config.ts", "dist", "node_modules"]
 }

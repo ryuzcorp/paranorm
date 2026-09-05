@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { Effect } from "effect";
+
 import { SqliteClient } from "@effect/sql-sqlite-node";
+import { Effect } from "effect";
 
 import {
   createMigrator,
@@ -33,120 +34,199 @@ entries:
 
 const v2 = v1
   .replace('"1.0.0"', '"2.0.0"')
-  .replace("  author_id: string", '  author_id: string\n  title: string default="Untitled"');
+  .replace(
+    "  author_id: string",
+    '  author_id: string\n  title: string default="Untitled"'
+  );
 
 describe("schema authoring", () => {
   test("parses types, constraints, relations, access, and dependency order", () => {
     const schema = parseSchema(v1);
     expect(schema.tableOrder).toEqual(["projects", "entries"]);
-    expect(schema.tables.entries!.columns.id!.generation).toBe("uuidv4");
-    expect(schema.tables.entries!.uniqueConstraints).toEqual([["project_id", "slug"]]);
-    expect(schema.tables.entries!.relations.project!.column).toBe("project_id");
-    expect(schema.tables.entries!.access).toMatchObject({
-      list: "public",
+    const { entries } = schema.tables;
+    expect(entries).toBeDefined();
+    if (!entries) {
+      throw new Error("expected entries table");
+    }
+    const idColumn = entries.columns.id;
+    expect(idColumn).toBeDefined();
+    if (!idColumn) {
+      throw new Error("expected id column");
+    }
+    expect(idColumn.generation).toBe("uuidv4");
+    expect(entries.uniqueConstraints).toEqual([["project_id", "slug"]]);
+    const projectRelation = entries.relations.project;
+    expect(projectRelation).toBeDefined();
+    if (!projectRelation) {
+      throw new Error("expected project relation");
+    }
+    expect(projectRelation.column).toBe("project_id");
+    expect(entries.access).toMatchObject({
       create: "authenticated",
-      update: "owner",
+      list: "public",
       ownerColumn: "author_id",
+      update: "owner",
     });
   });
 
   test("parses parameterized and nullable columns", () => {
     expect(parseColumn("id", "id(varchar(64))")).toMatchObject({
       dataType: "varchar(64)",
-      primaryKey: true,
       generation: "cuid",
+      primaryKey: true,
     });
-    expect(parseColumn("amount", "decimal(10, 2)? default=12.5")).toMatchObject({
-      kind: "decimal",
-      dataType: "decimal(10,2)",
-      nullable: true,
-      default: { kind: "literal", value: 12.5 },
-    });
+    expect(parseColumn("amount", "decimal(10, 2)? default=12.5")).toMatchObject(
+      {
+        dataType: "decimal(10,2)",
+        default: { kind: "literal", value: 12.5 },
+        kind: "decimal",
+        nullable: true,
+      }
+    );
   });
 
   test("rejects invalid owner access", () => {
     expect(() =>
-      parseSchema(`_version: "1.0.0"\nthings:\n  id: id\n  _access:\n    update: owner\n`),
+      parseSchema(
+        `_version: "1.0.0"\nthings:\n  id: id\n  _access:\n    update: owner\n`
+      )
     ).toThrow("requires owner_column");
   });
 
   test("requires underscored metadata", () => {
-    expect(() => parseSchema(`version: "1.0.0"\nthings:\n  id: id\n`)).toThrow("_version");
+    expect(() => parseSchema(`version: "1.0.0"\nthings:\n  id: id\n`)).toThrow(
+      "_version"
+    );
   });
 
   test("reports YAML source locations for schema errors", () => {
     expect(() =>
-      parseSchema(`_version: "1.0.0"\nentries:\n  id: id\n  author_id: references=missing.id\n`, {
-        sourceName: "cms-schema.yaml",
-      }),
+      parseSchema(
+        `_version: "1.0.0"\nentries:\n  id: id\n  author_id: references=missing.id\n`,
+        {
+          sourceName: "cms-schema.yaml",
+        }
+      )
     ).toThrow("cms-schema.yaml:4:3");
   });
 
   test("expands the complete auth macro", () => {
     const schema = parseSchema(
-      `_version: "1.0.0"\n_extends: [auth]\n_auth:\n  roles: [user, admin]\n  api_keys: true\nposts:\n  id: id\n  user_id: string references=user.id\n`,
+      `_version: "1.0.0"\n_extends: [auth]\n_auth:\n  roles: [user, admin]\n  api_keys: true\nposts:\n  id: id\n  user_id: string references=user.id\n`
     );
-    expect(schema.tables.user!.columns).toHaveProperty("banned");
-    expect(schema.tables.user!.columns.role).toMatchObject({
+    const { user } = schema.tables;
+    expect(user).toBeDefined();
+    if (!user) {
+      throw new Error("expected user table");
+    }
+    expect(user.columns).toHaveProperty("banned");
+    expect(user.columns.role).toMatchObject({
       enumValues: ["user", "admin"],
       multiple: true,
     });
-    expect(schema.tables.session!.columns.userId).toMatchObject({
+    const { session } = schema.tables;
+    expect(session).toBeDefined();
+    if (!session) {
+      throw new Error("expected session table");
+    }
+    expect(session.columns.userId).toMatchObject({
       index: true,
-      references: { table: "user", column: "id", onDelete: "cascade" },
+      references: { column: "id", onDelete: "cascade", table: "user" },
     });
-    expect(schema.tables.apikey!.columns).toHaveProperty("rateLimitEnabled");
-    expect(schema.tableOrder.indexOf("user")).toBeLessThan(schema.tableOrder.indexOf("posts"));
+    const { apikey } = schema.tables;
+    expect(apikey).toBeDefined();
+    if (!apikey) {
+      throw new Error("expected apikey table");
+    }
+    expect(apikey.columns).toHaveProperty("rateLimitEnabled");
+    expect(schema.tableOrder.indexOf("user")).toBeLessThan(
+      schema.tableOrder.indexOf("posts")
+    );
   });
 
   test("expands files and attachment pivots", () => {
     const schema = parseSchema(
-      `_version: "1.0.0"\n_extends: [auth, files]\n_files:\n  attach_to: [posts]\nposts:\n  id: id(bigint)\n`,
+      `_version: "1.0.0"\n_extends: [auth, files]\n_files:\n  attach_to: [posts]\nposts:\n  id: id(bigint)\n`
     );
-    expect(schema.tables.file!.columns.userId!.references).toMatchObject({
-      table: "user",
+    const { file } = schema.tables;
+    expect(file).toBeDefined();
+    if (!file) {
+      throw new Error("expected file table");
+    }
+    const userIdColumn = file.columns.userId;
+    expect(userIdColumn).toBeDefined();
+    if (!userIdColumn) {
+      throw new Error("expected userId column");
+    }
+    expect(userIdColumn.references).toMatchObject({
       onDelete: "set null",
+      table: "user",
     });
-    expect(schema.tables.posts_file!.columns.entityId).toMatchObject({
+    const postsFile = schema.tables.posts_file;
+    expect(postsFile).toBeDefined();
+    if (!postsFile) {
+      throw new Error("expected posts_file table");
+    }
+    expect(postsFile.columns.entityId).toMatchObject({
       dataType: "bigint",
       index: true,
-      references: { table: "posts", column: "id", onDelete: "cascade" },
+      references: { column: "id", onDelete: "cascade", table: "posts" },
     });
-    expect(schema.tables.posts_file!.relations).toHaveProperty("file");
+    expect(postsFile.relations).toHaveProperty("file");
   });
 
   test("supports ownerless files without auth", () => {
     const schema = parseSchema(
-      `_version: "1.0.0"\n_extends: [files]\n_files:\n  owner: false\nassets:\n  id: id\n`,
+      `_version: "1.0.0"\n_extends: [files]\n_files:\n  owner: false\nassets:\n  id: id\n`
     );
-    expect(schema.tables.file!.columns.userId).toBeUndefined();
+    const { file } = schema.tables;
+    expect(file).toBeDefined();
+    if (!file) {
+      throw new Error("expected file table");
+    }
+    expect(file.columns.userId).toBeUndefined();
   });
 });
 
 describe("schema migrations", () => {
   test("diffs consecutive schemas", () => {
     const diff = diffSchemas(parseSchema(v1), parseSchema(v2));
-    expect(diff.addedColumns.map(({ table, column }) => `${table}.${column.name}`)).toEqual([
-      "entries.title",
-    ]);
+    expect(
+      diff.addedColumns.map(({ table, column }) => `${table}.${column.name}`)
+    ).toEqual(["entries.title"]);
     expect(diff.removedColumns).toHaveLength(0);
   });
 
   test("exposes one migration per schema version", () => {
     const provider = new SchemaMigrationProvider({
-      schemas: [{ content: v1 }, { name: "002_v2", content: v2 }],
+      schemas: [{ content: v1 }, { content: v2, name: "002_v2" }],
     });
     const migrations = provider.getMigrations();
     expect(Object.keys(migrations)).toEqual(["1.0.0", "002_v2"]);
-    expect(migrations["002_v2"]!.id).toBe(2);
+    const v2Migration = migrations["002_v2"];
+    expect(v2Migration).toBeDefined();
+    if (!v2Migration) {
+      throw new Error("expected 002_v2 migration");
+    }
+    expect(v2Migration.id).toBe(2);
   });
 
   test("renders sqlite migration SQL", () => {
     const authored = defineSchema(
-      `_version: "1.0.0"\nrecords:\n  id: id(bigint)\n  payload: json\n  bytes: binary\n`,
+      `_version: "1.0.0"\nrecords:\n  id: id(bigint)\n  payload: json\n  bytes: binary\n`
     );
     const sqliteSql = createMigrator([authored], { dialect: "sqlite" }).sql();
-    const sqliteStatement = sqliteSql[0]!.statements[0]!.sql;
+    const [firstMigration] = sqliteSql;
+    expect(firstMigration).toBeDefined();
+    if (!firstMigration) {
+      throw new Error("expected migration SQL");
+    }
+    const [firstStatement] = firstMigration.statements;
+    expect(firstStatement).toBeDefined();
+    if (!firstStatement) {
+      throw new Error("expected first statement");
+    }
+    const sqliteStatement = firstStatement.sql;
     expect(sqliteStatement).toContain('"id" integer');
     expect(sqliteStatement).toContain('"payload" json');
     expect(sqliteStatement).toContain('"bytes" blob');
@@ -154,10 +234,10 @@ describe("schema migrations", () => {
 
   test("creates Effect migrator with schema sugar", async () => {
     const first = defineSchema(
-      `_version: "1.0.0"\npeople:\n  id: id(varchar(64))\n  name: string\n`,
+      `_version: "1.0.0"\npeople:\n  id: id(varchar(64))\n  name: string\n`
     );
     const second = defineSchema(
-      `_version: "2.0.0"\npeople:\n  id: id(varchar(64))\n  name: string\n  email: string? index\n`,
+      `_version: "2.0.0"\npeople:\n  id: id(varchar(64))\n  name: string\n  email: string? index\n`
     );
     const migrator = createMigrator([first, second], {
       table: "paranorm_migration",
@@ -166,18 +246,20 @@ describe("schema migrations", () => {
     const plan = migrator.plan();
     expect(plan).toHaveLength(2);
     expect(plan[1]).toMatchObject({
-      name: "2.0.0",
       destructive: false,
-      operations: [{ kind: "addColumn", table: "people", column: "email" }],
+      name: "2.0.0",
+      operations: [{ column: "email", kind: "addColumn", table: "people" }],
     });
     expect(migrator.validate()).toEqual(plan);
     const preview = migrator.sql();
     expect(
-      preview.flatMap((migration) => migration.statements.map((statement) => statement.sql)),
+      preview.flatMap((migration) =>
+        migration.statements.map((statement) => statement.sql)
+      )
     ).toContain('ALTER TABLE "people" ADD COLUMN "email" varchar(255)');
 
     await Effect.runPromise(
-      Effect.gen(function* () {
+      Effect.gen(function* migrate() {
         const applied = yield* migrator.migrate;
         expect(applied).toEqual([
           [1, "1.0.0"],
@@ -186,15 +268,23 @@ describe("schema migrations", () => {
         expect(migrator.plan()).toHaveLength(2);
 
         const sql = yield* SqliteClient.SqliteClient;
-        const columns = yield* sql<{ name: string }>`pragma table_info('people')`;
-        expect(columns.map((column) => column.name)).toEqual(["id", "name", "email"]);
+        const columns = yield* sql<{
+          name: string;
+        }>`pragma table_info('people')`;
+        expect(columns.map((column) => column.name)).toEqual([
+          "id",
+          "name",
+          "email",
+        ]);
 
         const again = yield* migrator.migrate;
         expect(again).toEqual([]);
       }).pipe(
-        Effect.provide(SqliteClient.layer({ filename: ":memory:", disableWAL: true })),
-        Effect.scoped,
-      ),
+        Effect.provide(
+          SqliteClient.layer({ disableWAL: true, filename: ":memory:" })
+        ),
+        Effect.scoped
+      )
     );
   });
 });

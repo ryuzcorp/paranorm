@@ -5,18 +5,22 @@
 ParanORM is an Effect SQL toolkit with three connected surfaces:
 
 1. A YAML authoring format for immutable database schema versions.
-2. A typed model API over Effect `SqlClient` (D1 or Node SQLite).
-3. A forward-only schema-diff migrator that emits SQLite DDL as Effects.
+2. A typed model API over Effect `SqlClient` (any `@effect/sql-*` driver).
+3. A forward-only schema-diff migrator that emits SQL as Effects.
 
-ParanORM is not a replacement for Effect SQL. Provide `@effect/sql-d1` or
-`@effect/sql-sqlite-node` at the edge; core queries only require `SqlClient`.
+ParanORM is not a SQL driver. Consumers provide any layer that implements `SqlClient` from `effect/unstable/sql`.
 
 ## 2. Canonical usage
 
 ```ts
 import { Effect } from "effect";
-import { paranorm, createMigrator, defineSchema, type InferSchema } from "paranorm";
-import { SqliteClient } from "paranorm/sqlite-node";
+import { SqliteClient } from "@effect/sql-sqlite-node";
+import {
+  paranorm,
+  createMigrator,
+  defineSchema,
+  type InferSchema,
+} from "paranorm";
 
 const schemaV1 = defineSchema(`
   _version: "1.0.0"
@@ -34,7 +38,10 @@ const migrator = createMigrator([schemaV1]);
 const program = Effect.gen(function* () {
   yield* migrator.migrate;
   return yield* orm.users.findMany();
-}).pipe(Effect.provide(SqliteClient.layer({ filename: "app.db" })), Effect.scoped);
+}).pipe(
+  Effect.provide(SqliteClient.layer({ filename: "app.db" })),
+  Effect.scoped
+);
 ```
 
 `defineSchema` removes common indentation at runtime and at the type level.
@@ -72,8 +79,7 @@ posts:
 
 ### 3.1 `_version`
 
-Required semver string. Published schema versions are immutable. Structural changes must
-be represented by a new document with a greater version.
+Required semver string. Published schema versions are immutable. Structural changes must be represented by a new document with a greater version.
 
 ### 3.2 `_extends`
 
@@ -84,8 +90,7 @@ Optional macro list. Macros expand before user tables are validated.
 
 ### 3.3 Tables
 
-A table is a top-level mapping whose key does not start with `_`. Its key is both its
-TypeScript-facing and database table name.
+A table is a top-level mapping whose key does not start with `_`. Its key is both its TypeScript-facing and database table name.
 
 Reserved table blocks are `_relations` and `_access`. Every other key is a column.
 
@@ -119,19 +124,19 @@ A trailing `?` makes the selected value nullable and the insert value optional.
 
 ### 4.2 Modifiers
 
-| Modifier                   | Meaning                                           |
-| -------------------------- | ------------------------------------------------- |
-| `unique`                   | Single-column unique constraint                   |
-| `unique=[table.a,table.b]` | Composite unique constraint                       |
-| `index`                    | Non-unique index                                  |
-| `default=<literal>`        | Literal or keyword default                        |
-| `default=now`              | Current timestamp default                         |
-| `default=sql("...")`       | Raw SQL default expression                        |
-| `references=table.column`  | Foreign key with inferred local SQL/value type    |
-| `on_delete=<action>`       | `cascade`, `set_null`, `restrict`, or `no_action` |
-| `on_update=<action>`       | Same actions as `on_delete`                       |
-| `enum=[a,b]`               | Text value union in inferred types                |
-| `multiple`                 | Comma-separated enum set, used by auth roles      |
+| Modifier | Meaning |
+| --- | --- |
+| `unique` | Single-column unique constraint |
+| `unique=[table.a,table.b]` | Composite unique constraint |
+| `index` | Non-unique index |
+| `default=<literal>` | Literal or keyword default |
+| `default=now` | Current timestamp default |
+| `default=sql("...")` | Raw SQL default expression |
+| `references=table.column` | Foreign key with inferred local SQL/value type |
+| `on_delete=<action>` | `cascade`, `set_null`, `restrict`, or `no_action` |
+| `on_update=<action>` | Same actions as `on_delete` |
+| `enum=[a,b]` | Text value union in inferred types |
+| `multiple` | Comma-separated enum set, used by auth roles |
 
 Foreign-key actions must follow `references=` in the same definition.
 
@@ -146,9 +151,7 @@ _auth:
   api_keys: true
 ```
 
-The macro creates `user`, `session`, `account`, and `verification`, including Better Auth
-admin fields. `api_keys: true` also creates `apikey`. Auth foreign keys use indexes and
-cascade behavior where required.
+The macro creates `user`, `session`, `account`, and `verification`, including Better Auth admin fields. `api_keys: true` also creates `apikey`. Auth foreign keys use indexes and cascade behavior where required.
 
 ### 5.2 Files
 
@@ -159,9 +162,7 @@ _files:
   owner: true
 ```
 
-The macro creates `file` and one `<table>_file` pivot for every attachment target. Pivot
-`entityId` uses the attached table's ID type. Owned files require the auth macro;
-`owner: false` removes `file.userId`.
+The macro creates `file` and one `<table>_file` pivot for every attachment target. Pivot `entityId` uses the attached table's ID type. Owned files require the auth macro; `owner: false` removes `file.userId`.
 
 ## 6. Relations and access metadata
 
@@ -172,14 +173,11 @@ _relation_name: belongs_to=target
 _relation_name: has_many=target
 ```
 
-`belongs_to` requires exactly one foreign key to the target. `has_many` requires a reverse
-`belongs_to`. Ambiguous multiple foreign keys to one target are rejected.
+`belongs_to` requires exactly one foreign key to the target. `has_many` requires a reverse `belongs_to`. Ambiguous multiple foreign keys to one target are rejected.
 
-Access policies support `public`, `authenticated`, and `owner` for `list`, `create`,
-`update`, and `delete`. Owner policies require an existing `owner_column`.
+Access policies support `public`, `authenticated`, and `owner` for `list`, `create`, `update`, and `delete`. Owner policies require an existing `owner_column`.
 
-These blocks are schema metadata. The current DB-only `paranorm(db)` model API does
-not load relation or access metadata at runtime.
+These blocks are schema metadata. The current DB-only `paranorm(db)` model API does not load relation or access metadata at runtime.
 
 ## 7. Type inference
 
@@ -191,12 +189,9 @@ type DB = InferSchema<typeof authored>;
 type DB2 = InferDatabase<typeof yamlLiteral>;
 ```
 
-Inference covers tables, columns, references, defaults, generated IDs, nullability,
-enums, auth, files, and ParanORM's `Selectable`, `Insertable`, and `Updateable` helpers.
+Inference covers tables, columns, references, defaults, generated IDs, nullability, enums, auth, files, and ParanORM's `Selectable`, `Insertable`, and `Updateable` helpers.
 
-The `schema` tagged template is a dedented runtime authoring helper and may be aliased to
-`yaml`. TypeScript does not expose tagged-template static segments as literal tuple types,
-so `InferSchema` inference requires `defineSchema(...)` with a literal or `const` string.
+The `schema` tagged template is a dedented runtime authoring helper and may be aliased to `yaml`. TypeScript does not expose tagged-template static segments as literal tuple types, so `InferSchema` inference requires `defineSchema(...)` with a literal or `const` string.
 
 ## 8. Query model API
 
@@ -204,8 +199,7 @@ so `InferSchema` inference requires `defineSchema(...)` with a literal or `const
 const orm = paranorm<DB>();
 ```
 
-`paranorm` creates a lazy proxy of models. Each method returns an Effect requiring
-`SqlClient` from `effect/unstable/sql`.
+`paranorm` creates a lazy proxy of models. Each method returns an Effect requiring `SqlClient` from `effect/unstable/sql`.
 
 Each model provides:
 
@@ -227,13 +221,9 @@ const rows =
 // Array<{ id: string; email: string }>
 ```
 
-Writes use ParanORM's `Insertable<Table>` and `Updateable<Table>` types. Single-row writes
-return the affected row or fail with `ParanOrmError("NOT_FOUND")`. Mutation `RETURNING` and
-upsert use SQLite semantics shared by D1 and Node SQLite.
+Writes use ParanORM's `Insertable<Table>` and `Updateable<Table>` types. Single-row writes return the affected row or fail with `ParanOrmError("NOT_FOUND")`. Mutations use Effect dialect helpers (`RETURNING` / `OUTPUT`); `upsert` uses `ON CONFLICT`.
 
-Filters support direct equality, `AND`/`OR`/`NOT`, string matching, comparisons, sets, and
-null checks. LIKE wildcard input is escaped. Pagination supports offset and multi-column
-keyset cursors.
+Filters support direct equality, `AND`/`OR`/`NOT`, string matching, comparisons, sets, and null checks. LIKE wildcard input is escaped. Pagination supports offset and multi-column keyset cursors.
 
 ## 9. Migrations
 
@@ -254,63 +244,49 @@ yield * migrator.migrate;
 - `plan()` — schema operations with destructive flags.
 - `validate()` — validates destructive-change policy.
 - `sql()` — compiled SQL and parameters without applying migrations.
-- `migrate` — Effect that applies pending migrations (D1-safe: no transaction wrapper).
+- `migrate` — Effect that applies pending migrations (no transaction wrapper, so D1 works).
 - `layer` / `loader` — for composing with Effect layers and `Migrator.fromRecord`.
 
-Inputs may be typed schemas, YAML strings, or `{ name, content }`. Names default to
-`_version`. Low-level `SchemaMigrationProvider` and `applySchemaDiff` remain public.
+Inputs may be typed schemas, YAML strings, or `{ name, content }`. Names default to `_version`. Low-level `SchemaMigrationProvider` and `applySchemaDiff` remain public.
 
-Migration DDL targets SQLite. Runtime dialect choice (`paranorm/d1` vs
-`paranorm/sqlite-node`) does not change rendered SQL.
+Migration DDL currently renders SQLite SQL. Pair with SQLite-compatible `SqlClient` drivers; the query API itself accepts any Effect SQL client.
 
 ## 10. Diagnostics
 
-String schema validation throws `SchemaValidationError` with `sourceName`, line, and
-column:
+String schema validation throws `SchemaValidationError` with `sourceName`, line, and column:
 
 ```text
 cms-schema.yaml:18:3 Invalid schema: entries.author_id references missing column 'users.id'
 ```
 
-Migration source names are forwarded into diagnostics. Object-form schemas cannot provide
-source locations unless the caller retains and supplies their text.
+Migration source names are forwarded into diagnostics. Object-form schemas cannot provide source locations unless the caller retains and supplies their text.
 
 ## 11. Dependency ordering and safety
 
-Tables are created in foreign-key dependency order and removed in reverse order. Cyclic
-foreign keys are rejected. Indexes and constraints are removed before destructive column
-operations. Forward destructive migrations require `allowDestructive: true`. Migrations
-are forward-only.
+Tables are created in foreign-key dependency order and removed in reverse order. Cyclic foreign keys are rejected. Indexes and constraints are removed before destructive column operations. Forward destructive migrations require `allowDestructive: true`. Migrations are forward-only.
 
 ## 12. Next additions (5–10)
 
 ### 5. Complete dialect hardening
 
-Add safe SQLite table-rebuild migrations for unsupported `ALTER` operations, and explicit
-errors for constraint/alter-column cases that SQLite cannot express in place.
+Add safe SQLite table-rebuild migrations for unsupported `ALTER` operations, and explicit errors for constraint/alter-column cases that SQLite cannot express in place.
 
 ### 6. Aggregates and grouping
 
-Add typed `aggregate` and `groupBy` APIs for count, sum, average, minimum, and maximum,
-including projected aggregate result types.
+Add typed `aggregate` and `groupBy` APIs for count, sum, average, minimum, and maximum, including projected aggregate result types.
 
 ### 7. Reusable query fragments
 
-Allow typed reusable `where`, selection, and ordering fragments that can be shared by
-`findMany`, `count`, `exists`, and pagination without losing inference.
+Allow typed reusable `where`, selection, and ordering fragments that can be shared by `findMany`, `count`, `exists`, and pagination without losing inference.
 
 ### 8. Transaction ergonomics
 
-Document and test `sql.withTransaction` with ParanORM Effects on Node SQLite, and note D1
-batch semantics as the atomic alternative.
+Document and test `sql.withTransaction` with ParanORM Effects on Node SQLite, and note D1 batch semantics as the atomic alternative.
 
 ### 9. CLI tooling
 
-Add `paranorm schema check`, `schema format`, `schema diff`, `migrate status`, `migrate sql`,
-and `migrate latest` commands with machine-readable output.
+Add `paranorm schema check`, `schema format`, `schema diff`, `migrate status`, `migrate sql`, and `migrate latest` commands with machine-readable output.
 
 ### 10. Generated declarations and YAML imports
 
-Add code generation and Vite/editor integration so real `.yaml` files can be imported with
-exact `InferSchema` types, diagnostics, and highlighting without duplicating schema text in
-TypeScript.
+Add code generation and Vite/editor integration so real `.yaml` files can be imported with exact `InferSchema` types, diagnostics, and highlighting without duplicating schema text in TypeScript.

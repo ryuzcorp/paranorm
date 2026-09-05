@@ -3,13 +3,11 @@
   "version": "0.2.0",
   "description": "YAML schema inference, migrations, and a typed model API for Effect SQL.",
   "keywords": [
-    "d1",
     "database",
     "effect",
     "migration",
     "schema",
     "sql",
-    "sqlite",
     "typescript",
     "yaml"
   ],
@@ -30,14 +28,6 @@
     ".": {
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs"
-    },
-    "./d1": {
-      "types": "./dist/d1.d.mts",
-      "import": "./dist/d1.mjs"
-    },
-    "./sqlite-node": {
-      "types": "./dist/sqlite-node.d.mts",
-      "import": "./dist/sqlite-node.mjs"
     }
   },
   "publishConfig": {
@@ -48,8 +38,10 @@
     "test": "bun test",
     "fmt": "oxfmt",
     "typecheck": "tsc --noEmit",
-    "check": "bun run test && bun run typecheck && bun run build",
-    "prepublishOnly": "bun run check"
+    "check": "ultracite check",
+    "prepublishOnly": "bun run check",
+    "fix": "ultracite fix",
+    "prepare": "husky"
   },
   "dependencies": {
     "confbox": "^0.2.4",
@@ -57,27 +49,19 @@
     "effect": "^4.0.0-rc.112"
   },
   "devDependencies": {
-    "@effect/sql-d1": "^4.0.0-rc.112",
     "@effect/sql-sqlite-node": "^4.0.0-rc.112",
     "@tsconfig/strictest": "^2.0.8",
     "@types/bun": "latest",
     "@types/node": "^26.2.0",
-    "oxfmt": "^0.63.0",
+    "husky": "^9.1.7",
+    "oxfmt": "^0.66.0",
+    "oxlint": "^1.81.0",
     "tsdown": "^0.22.14",
-    "typescript": "^7"
+    "typescript": "^7",
+    "ultracite": "7.10.8"
   },
   "peerDependencies": {
-    "@effect/sql-d1": "^4.0.0-rc.112",
-    "@effect/sql-sqlite-node": "^4.0.0-rc.112",
     "effect": "^4.0.0-rc.112"
-  },
-  "peerDependenciesMeta": {
-    "@effect/sql-d1": {
-      "optional": true
-    },
-    "@effect/sql-sqlite-node": {
-      "optional": true
-    }
   },
   "packageManager": "bun@1.4.0"
 }

@@ -14,87 +14,110 @@ export type ColumnKind = (typeof COLUMN_TYPES)[number];
 export type AccessPolicy = "public" | "authenticated" | "owner";
 export type AccessAction = "list" | "create" | "update" | "delete";
 
-export type ReferentialAction = "cascade" | "set null" | "restrict" | "no action";
+export type ReferentialAction =
+  | "cascade"
+  | "set null"
+  | "restrict"
+  | "no action";
+
 export interface Reference {
-  table: string;
   column: string;
   onDelete?: ReferentialAction;
   onUpdate?: ReferentialAction;
+  table: string;
 }
+
+export type DefaultValue =
+  | { kind: "keyword"; value: string }
+  | { kind: "literal"; value: string | number | boolean | null }
+  | { kind: "sql"; value: string };
+
 export interface ColumnDefinition {
-  name: string;
-  kind: ColumnKind;
+  compositeUnique?: string[];
   dataType: string;
+  default?: DefaultValue;
+  enumValues?: string[];
+  generation?: "cuid" | "uuidv4" | "auto-increment";
+  index: boolean;
+  kind: ColumnKind;
+  multiple?: boolean;
+  name: string;
   nullable: boolean;
   primaryKey: boolean;
-  generation?: "cuid" | "uuidv4" | "auto-increment";
-  unique: boolean;
-  index: boolean;
-  enumValues?: string[];
-  multiple?: boolean;
-  compositeUnique?: string[];
-  default?: { kind: "keyword" | "literal" | "sql"; value: unknown };
   references?: Reference;
   source: string;
+  unique: boolean;
 }
 
 export interface RelationDefinition {
-  name: string;
-  kind: "belongs_to" | "has_many";
-  table: string;
   column?: string;
+  kind: "belongs_to" | "has_many";
+  name: string;
+  table: string;
 }
 
 export interface AccessDefinition {
-  list: AccessPolicy;
   create: AccessPolicy;
-  update: AccessPolicy;
   delete: AccessPolicy;
+  list: AccessPolicy;
   ownerColumn?: string;
+  update: AccessPolicy;
 }
 
 export interface TableDefinition {
-  name: string;
-  columns: Record<string, ColumnDefinition>;
-  relations: Record<string, RelationDefinition>;
   access?: AccessDefinition;
+  columns: Record<string, ColumnDefinition>;
+  name: string;
+  relations: Record<string, RelationDefinition>;
   uniqueConstraints: string[][];
 }
 
+/** Nested YAML / macro configuration values. */
+export type YamlValue =
+  | string
+  | number
+  | boolean
+  | null
+  | YamlValue[]
+  | { [key: string]: YamlValue };
+
 export interface AuthoredSchema {
-  version: string;
   extends: string[];
-  extensions: Record<string, unknown>;
-  tables: Record<string, TableDefinition>;
+  extensions: Record<string, YamlValue>;
   tableOrder: string[];
+  tables: Record<string, TableDefinition>;
+  version: string;
 }
 
 export interface SchemaMacroContext {
-  config: unknown;
+  config: YamlValue;
 }
-export type SchemaMacro = (context: SchemaMacroContext) => Record<string, unknown>;
+export type SchemaMacro = (
+  context: SchemaMacroContext
+) => Record<string, YamlValue>;
 export type SchemaMacroRegistry = Record<string, SchemaMacro>;
 
 export interface SchemaSource {
+  content: string | YamlValue;
   name?: string;
-  content: string | Record<string, unknown>;
 }
+
 export interface SchemaDiff {
-  fromVersion?: string;
-  toVersion: string;
+  addedColumns: { column: ColumnDefinition; table: string }[];
+  addedIndexes: { column: string; table: string }[];
   addedTables: TableDefinition[];
-  removedTables: TableDefinition[];
-  addedColumns: Array<{ table: string; column: ColumnDefinition }>;
-  removedColumns: Array<{ table: string; column: ColumnDefinition }>;
-  changedColumns: Array<{
-    table: string;
+  addedUniqueConstraints: { columns: string[]; table: string }[];
+  changedColumns: {
     from: ColumnDefinition;
+    table: string;
     to: ColumnDefinition;
-  }>;
-  addedUniqueConstraints: Array<{ table: string; columns: string[] }>;
-  removedUniqueConstraints: Array<{ table: string; columns: string[] }>;
-  addedIndexes: Array<{ table: string; column: string }>;
-  removedIndexes: Array<{ table: string; column: string }>;
+  }[];
+  fromVersion?: string;
+  removedColumns: { column: ColumnDefinition; table: string }[];
+  removedIndexes: { column: string; table: string }[];
+  removedTables: TableDefinition[];
+  removedUniqueConstraints: { columns: string[]; table: string }[];
+  toVersion: string;
 }
 
 export interface ApplySchemaOptions {

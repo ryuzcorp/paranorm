@@ -1,14 +1,13 @@
 import { describe, expect, expectTypeOf, test } from "bun:test";
 
-import {
-  defineSchema,
-  type InferSchema,
-  type InferDatabase,
-  type Insertable,
-  type JSONValue,
-  type Selectable,
-  type Updateable,
-  schema as yamlSchema,
+import { defineSchema, schema as yamlSchema } from "./index.ts";
+import type {
+  InferSchema,
+  InferDatabase,
+  Insertable,
+  JSONValue,
+  Selectable,
+  Updateable,
 } from "./index.ts";
 
 const yaml = `
@@ -34,10 +33,9 @@ type Post = Selectable<DB["posts"]>;
 type NewPost = Insertable<DB["posts"]>;
 type PostUpdate = Updateable<DB["posts"]>;
 
-function interpolationIsRejected(value: string) {
+const interpolationIsRejected = (value: string) =>
   // @ts-expect-error Schema interpolation is intentionally unsupported.
-  return yamlSchema`_version: "1.0.0"\n${value}`;
-}
+  yamlSchema`_version: "1.0.0"\n${value}`;
 void interpolationIsRejected;
 
 describe("YAML schema type inference", () => {
@@ -67,16 +65,24 @@ describe("YAML schema type inference", () => {
       author_id: string;
     }>();
     expectTypeOf<NewPost["id"]>().toEqualTypeOf<string | undefined>();
-    expectTypeOf<NewPost["status"]>().toEqualTypeOf<"draft" | "published" | undefined>();
+    expectTypeOf<NewPost["status"]>().toEqualTypeOf<
+      "draft" | "published" | undefined
+    >();
     expectTypeOf<PostUpdate["title"]>().toEqualTypeOf<string | undefined>();
   });
 
   test("infers auth, API-key, file, and attachment tables", () => {
     expectTypeOf<Selectable<DB["user"]>["banned"]>().toEqualTypeOf<boolean>();
-    expectTypeOf<Selectable<DB["user"]>["role"]>().toEqualTypeOf<"user" | "admin">();
-    expectTypeOf<Selectable<DB["apikey"]>["requestCount"]>().toEqualTypeOf<number>();
+    expectTypeOf<Selectable<DB["user"]>["role"]>().toEqualTypeOf<
+      "user" | "admin"
+    >();
+    expectTypeOf<
+      Selectable<DB["apikey"]>["requestCount"]
+    >().toEqualTypeOf<number>();
     expectTypeOf<Selectable<DB["file"]>["userId"]>().toEqualTypeOf<string>();
-    expectTypeOf<Selectable<DB["posts_file"]>["entityId"]>().toEqualTypeOf<string>();
+    expectTypeOf<
+      Selectable<DB["posts_file"]>["entityId"]
+    >().toEqualTypeOf<string>();
   });
 
   test("defineSchema carries the inferred database type", () => {
@@ -98,6 +104,16 @@ describe("YAML schema type inference", () => {
     expect(tagged.version).toBe("1.0.0");
     expect(tagged.source).toStartWith('_version: "1.0.0"');
     expect(tagged.source).toContain("notes:");
-    expect(tagged.tables.notes!.columns.body!.kind).toBe("string");
+    const { notes } = tagged.tables;
+    expect(notes).toBeDefined();
+    if (!notes) {
+      throw new Error("expected notes table");
+    }
+    const { body } = notes.columns;
+    expect(body).toBeDefined();
+    if (!body) {
+      throw new Error("expected body column");
+    }
+    expect(body.kind).toBe("string");
   });
 });

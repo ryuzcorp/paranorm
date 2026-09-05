@@ -1,31 +1,28 @@
 # ParanORM
 
-Effect SQL on steroids: author database schemas in YAML, infer typed database
-interfaces, apply schema-diff migrations, and query through a compact model API.
+Effect SQL on steroids: author database schemas in YAML, infer typed database interfaces, apply schema-diff migrations, and query through a compact model API.
+
+ParanORM talks only to Effect's generic [`SqlClient`](https://effect.website/docs/v4/api/sql). Bring any driver from the [Effect SQL section](https://effect.website/docs/v4/api) (`@effect/sql-pg`, `@effect/sql-d1`, `@effect/sql-sqlite-node`, …).
 
 ## Install
 
 ```bash
 npm i paranorm effect
 
-# Cloudflare Workers / celld (D1)
-npm i @effect/sql-d1
-
-# Node Fetch / standard Node (node:sqlite, Node 22.16+)
+# plus one driver, for example:
 npm i @effect/sql-sqlite-node
+# npm i @effect/sql-d1
+# npm i @effect/sql-pg
 ```
 
 ## Quick start
 
-Keep the YAML as a literal so TypeScript can infer its database type. Choose a
-dialect layer for your runtime, then query through Effects:
+Keep the YAML as a literal so TypeScript can infer its database type. Provide any `SqlClient` layer at the edge:
 
 ```ts
 import { Effect } from "effect";
+import { SqliteClient } from "@effect/sql-sqlite-node";
 import { paranorm, defineSchema, type InferSchema } from "paranorm";
-import { SqliteClient } from "paranorm/sqlite-node";
-// Cloudflare / celld:
-// import { D1Client } from "paranorm/d1";
 
 const schema = defineSchema(`
   _version: "1.0.0"
@@ -58,29 +55,33 @@ const program = Effect.gen(function* () {
 });
 
 const posts = await Effect.runPromise(
-  program.pipe(Effect.provide(SqliteClient.layer({ filename: "app.db" })), Effect.scoped),
+  program.pipe(
+    Effect.provide(SqliteClient.layer({ filename: "app.db" })),
+    Effect.scoped
+  )
 );
 ```
 
-On Cloudflare Workers / celld, swap the layer:
+Cloudflare D1 / celld:
 
 ```ts
+import { D1Client } from "@effect/sql-d1";
+
 program.pipe(Effect.provide(D1Client.layer({ db: env.DB })), Effect.scoped);
 ```
 
-`paranorm<DB>()` creates models lazily through a proxy. Table names, columns,
-rows, filters, and operators are inferred from `DB`. Methods return Effects that
-require `SqlClient` from `effect/unstable/sql`.
+Postgres:
 
-## Dialects
+```ts
+import { PgClient } from "@effect/sql-pg";
 
-| Runtime                    | Entry                  | Layer                              |
-| -------------------------- | ---------------------- | ---------------------------------- |
-| Cloudflare Workers / celld | `paranorm/d1`          | `D1Client.layer({ db })`           |
-| Node Fetch / `node:sqlite` | `paranorm/sqlite-node` | `SqliteClient.layer({ filename })` |
+program.pipe(
+  Effect.provide(PgClient.layer({ database: "app" })),
+  Effect.scoped
+);
+```
 
-Core code depends only on Effect's generic `SqlClient`. Pick the dialect at the
-edge so Workers never pull in `node:sqlite`.
+`paranorm<DB>()` creates models lazily through a proxy. Methods return Effects that require `SqlClient` from `effect/unstable/sql` — never a concrete driver type.
 
 ## Query API
 
@@ -113,8 +114,9 @@ const users =
 // Array<{ id: string; email: string }>
 ```
 
-Writes use ParanORM's `Insertable` and `Updateable` helpers. Single-row writes
-return the affected row; `updateMany` and `deleteMany` return affected counts.
+Writes use ParanORM's `Insertable` and `Updateable` helpers. Single-row writes return the affected row; `updateMany` and `deleteMany` return affected counts.
+
+`upsert` uses `ON CONFLICT` (SQLite, Postgres, D1, …). Mutations that need a returned row use `RETURNING` / `OUTPUT` via Effect's dialect helpers.
 
 ### Filters
 
@@ -218,45 +220,50 @@ function loadSchema() {
 }
 ```
 
-The tag uses [`dedent`](https://github.com/dmnd/dedent). Interpolations are
-rejected. TypeScript does not expose tagged-template text as a string-literal
-type, so use `defineSchema(yamlLiteral)` when compile-time inference is needed.
+The tag uses [`dedent`](https://github.com/dmnd/dedent). Interpolations are rejected. TypeScript does not expose tagged-template text as a string-literal type, so use `defineSchema(yamlLiteral)` when compile-time inference is needed.
 
 See [SPEC.md](./SPEC.md) for the complete authoring format.
 
 ## Schema migrations
 
-`createMigrator` builds a forward-only schema-diff migrator over Effect
-`SqlClient` (works on both D1 and Node SQLite):
+`createMigrator` builds a forward-only schema-diff migrator over Effect `SqlClient`:
 
 ```ts
 import { Effect } from "effect";
+import { SqliteClient } from "@effect/sql-sqlite-node";
 import { createMigrator, defineSchema } from "paranorm";
-import { SqliteClient } from "paranorm/sqlite-node";
 
 const v1 = defineSchema(`_version: "1.0.0"\nusers:\n  id: id\n`);
-const v2 = defineSchema(`_version: "2.0.0"\nusers:\n  id: id\n  email: string?\n`);
+const v2 = defineSchema(
+  `_version: "2.0.0"\nusers:\n  id: id\n  email: string?\n`
+);
 
 const migrator = createMigrator([v1, v2], {
-  table: "paranorm_migrations",
   allowDestructive: false,
+  table: "paranorm_migrations",
 });
 
-migrator.plan(); // Structured operations
-migrator.validate(); // Destructive-policy validation
-migrator.sql(); // Compiled SQL without execution
+migrator.plan();
+migrator.validate();
+migrator.sql();
 
 await Effect.runPromise(
-  migrator.migrate.pipe(Effect.provide(SqliteClient.layer({ filename: "app.db" })), Effect.scoped),
+  migrator.migrate.pipe(
+    Effect.provide(SqliteClient.layer({ filename: "app.db" })),
+    Effect.scoped
+  )
 );
 ```
 
 Or wire migrations into a layer:
 
 ```ts
-const SqlLive = Layer.provideMerge(migrator.layer, SqliteClient.layer({ filename: "app.db" }));
+const SqlLive = Layer.provideMerge(
+  migrator.layer,
+  SqliteClient.layer({ filename: "app.db" })
+);
 ```
 
-`SchemaMigrationProvider` and `migrateSchemasToLatest` remain available as
-lower-level APIs. Forward destructive changes require `allowDestructive: true`.
-DDL rendering targets SQLite (both runtime dialects).
+`SchemaMigrationProvider` and `migrateSchemasToLatest` remain available as lower-level APIs. Forward destructive changes require `allowDestructive: true`.
+
+Migration DDL currently renders SQLite SQL (`dialect: "sqlite"`). Pair it with SQLite-compatible drivers (D1, `sql-sqlite-node`, Bun, wasm, …). Query APIs remain driver-agnostic regardless.
