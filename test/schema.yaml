@@ -1,10 +1,9 @@
 _version: "1.0.0"
 
 # _extends: opt-in schema macros, expanded before tables are processed.
-#   auth  → injects user/session/account/verification tables (Better Auth shape)
-#   files → adds upload/download/attach endpoints; configure via _files: below
-# NOT enabling `auth` here since `users` is still hand-rolled below —
-# pick one or the other, don't run both against the same concept.
+#   files → file metadata + attachment pivots; configure via _files:
+#   idempotency → paranorm_idempotency for once()
+# Better Auth: author tables in YAML — see DOCS.md (no auth macro).
 _extends: [files]
 
 _files:

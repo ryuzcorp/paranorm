@@ -176,9 +176,9 @@ children:
     expect(() =>
       parseSchema(`
 _version: "1.0.0"
-_extends: [auth]
-user:
-  id: id
+_extends: [idempotency]
+paranorm_idempotency:
+  key: id
 `)
     ).toThrow("cannot be redefined");
     expect(() => parseSchema(`_version: "1.0.0"\n_extends: [nope]\n`)).toThrow(
@@ -277,15 +277,7 @@ posts:
     ).toThrow("must include itself");
   });
 
-  test("rejects auth roles with commas and invalid versions", () => {
-    expect(() =>
-      parseSchema(`
-_version: "1.0.0"
-_extends: [auth]
-_auth:
-  roles: ["user,admin"]
-`)
-    ).toThrow("without commas");
+  test("rejects invalid versions", () => {
     expect(() => parseSchema(`_version: "1.0"\nthings:\n  id: id\n`)).toThrow(
       "semver"
     );

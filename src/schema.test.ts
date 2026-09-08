@@ -114,10 +114,34 @@ describe("schema authoring", () => {
     ).toThrow("cms-schema.yaml:4:3");
   });
 
-  test("expands the complete auth macro", () => {
-    const schema = parseSchema(
-      `_version: "1.0.0"\n_extends: [auth]\n_auth:\n  roles: [user, admin]\n  api_keys: true\nposts:\n  id: id\n  user_id: string references=user.id\n`
-    );
+  test("parses explicit Better Auth-shaped tables", () => {
+    const schema = parseSchema(`
+_version: "1.0.0"
+user:
+  id: id
+  name: string
+  email: string unique
+  emailVerified: boolean default=false
+  image: string?
+  role: string default="user"
+  banned: boolean default=false
+  banReason: string?
+  banExpires: timestamp?
+  createdAt: timestamp default=now
+  updatedAt: timestamp default=now
+session:
+  id: id
+  expiresAt: timestamp
+  token: string unique
+  userId: references=user.id on_delete=cascade index
+  createdAt: timestamp default=now
+  updatedAt: timestamp default=now
+  _relations:
+    user: belongs_to=user
+posts:
+  id: id
+  user_id: string references=user.id
+`);
     const { user } = schema.tables;
     expect(user).toBeDefined();
     if (!user) {
@@ -125,8 +149,7 @@ describe("schema authoring", () => {
     }
     expect(user.columns).toHaveProperty("banned");
     expect(user.columns.role).toMatchObject({
-      enumValues: ["user", "admin"],
-      multiple: true,
+      default: { kind: "literal", value: "user" },
     });
     const { session } = schema.tables;
     expect(session).toBeDefined();
@@ -137,12 +160,6 @@ describe("schema authoring", () => {
       index: true,
       references: { column: "id", onDelete: "cascade", table: "user" },
     });
-    const { apikey } = schema.tables;
-    expect(apikey).toBeDefined();
-    if (!apikey) {
-      throw new Error("expected apikey table");
-    }
-    expect(apikey.columns).toHaveProperty("rateLimitEnabled");
     expect(schema.tableOrder.indexOf("user")).toBeLessThan(
       schema.tableOrder.indexOf("posts")
     );
@@ -150,7 +167,7 @@ describe("schema authoring", () => {
 
   test("expands files and attachment pivots", () => {
     const schema = parseSchema(
-      `_version: "1.0.0"\n_extends: [auth, files]\n_files:\n  attach_to: [posts]\nposts:\n  id: id(bigint)\n`
+      `_version: "1.0.0"\n_extends: [files]\n_files:\n  attach_to: [posts]\nuser:\n  id: id\nposts:\n  id: id(bigint)\n`
     );
     const { file } = schema.tables;
     expect(file).toBeDefined();
@@ -179,7 +196,7 @@ describe("schema authoring", () => {
     expect(postsFile.relations).toHaveProperty("file");
   });
 
-  test("supports ownerless files without auth", () => {
+  test("supports ownerless files without a user table", () => {
     const schema = parseSchema(
       `_version: "1.0.0"\n_extends: [files]\n_files:\n  owner: false\nassets:\n  id: id\n`
     );

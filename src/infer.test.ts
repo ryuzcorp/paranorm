@@ -12,15 +12,12 @@ import type {
 
 const yaml = `
   _version: "1.0.0"
-  _extends: [auth, files]
-  _auth:
-    roles: [user, admin]
-    api_keys: true
+  _extends: [files]
   _files:
     attach_to: [posts]
+    owner: false
   posts:
     id: id(bigint)
-    author_id: references=user.id
     title: string
     status: string enum=[draft,published] default="draft"
     score: decimal(10,2)?
@@ -55,14 +52,13 @@ describe("YAML schema type inference", () => {
 
   test("infers select, insert, and update types", () => {
     expectTypeOf<Post["id"]>().toEqualTypeOf<string>();
-    expectTypeOf<Post["author_id"]>().toEqualTypeOf<string>();
+    expectTypeOf<Post["title"]>().toEqualTypeOf<string>();
     expectTypeOf<Post["status"]>().toEqualTypeOf<"draft" | "published">();
     expectTypeOf<Post["score"]>().toEqualTypeOf<string | null>();
     expectTypeOf<Post["metadata"]>().toEqualTypeOf<JSONValue | null>();
     expectTypeOf<Post["published_at"]>().toEqualTypeOf<Date | null>();
     expectTypeOf<NewPost>().toMatchObjectType<{
       title: string;
-      author_id: string;
     }>();
     expectTypeOf<NewPost["id"]>().toEqualTypeOf<string | undefined>();
     expectTypeOf<NewPost["status"]>().toEqualTypeOf<
@@ -71,15 +67,16 @@ describe("YAML schema type inference", () => {
     expectTypeOf<PostUpdate["title"]>().toEqualTypeOf<string | undefined>();
   });
 
-  test("infers auth, API-key, file, and attachment tables", () => {
-    expectTypeOf<Selectable<DB["user"]>["banned"]>().toEqualTypeOf<boolean>();
-    expectTypeOf<Selectable<DB["user"]>["role"]>().toEqualTypeOf<
-      "user" | "admin"
-    >();
-    expectTypeOf<
-      Selectable<DB["apikey"]>["requestCount"]
-    >().toEqualTypeOf<number>();
-    expectTypeOf<Selectable<DB["file"]>["userId"]>().toEqualTypeOf<string>();
+  test("infers file and attachment tables", () => {
+    expectTypeOf<Selectable<DB["file"]>>().toEqualTypeOf<{
+      id: string;
+      key: string;
+      name: string;
+      type: string;
+      size: number;
+      createdAt: Date;
+      updatedAt: Date;
+    }>();
     expectTypeOf<
       Selectable<DB["posts_file"]>["entityId"]
     >().toEqualTypeOf<string>();

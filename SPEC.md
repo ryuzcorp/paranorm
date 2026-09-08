@@ -52,29 +52,22 @@ All document metadata starts with `_`. Every top-level key without `_` is a tabl
 
 ```yaml
 _version: "1.0.0"
-_extends: [auth, files]
-
-_auth:
-  roles: [user, admin]
-  api_keys: true
+_extends: [files]
 
 _files:
   attach_to: [posts]
-  owner: true
+  owner: false
 
 posts:
   id: id(bigint)
-  user_id: references=user.id on_delete=cascade index
   title: string
   status: string enum=[draft,published] default="draft"
   published_at: timestamp?
-  _relations:
-    user: belongs_to=user
   _access:
     list: public
     create: authenticated
-    update: owner
-    owner_column: user_id
+    update: public
+    delete: public
 ```
 
 ### 3.1 `_version`
@@ -85,8 +78,10 @@ Required semver string. Published schema versions are immutable. Structural chan
 
 Optional macro list. Macros expand before user tables are validated.
 
-- `auth` creates Better Auth core/admin tables and optional API-key tables.
 - `files` creates file metadata and attachment pivot tables.
+- `idempotency` creates `paranorm_idempotency` for `once()`.
+
+Better Auth is not a macro — author its tables in YAML. See [DOCS.md](./DOCS.md).
 
 ### 3.3 Tables
 
@@ -136,35 +131,26 @@ A trailing `?` makes the selected value nullable and the insert value optional.
 | `on_delete=<action>` | `cascade`, `set_null`, `restrict`, or `no_action` |
 | `on_update=<action>` | Same actions as `on_delete` |
 | `enum=[a,b]` | Text value union in inferred types |
-| `multiple` | Comma-separated enum set, used by auth roles |
+| `multiple` | Comma-separated enum set |
 
 Foreign-key actions must follow `references=` in the same definition.
 
 ## 5. Built-in macros
 
-### 5.1 Auth
+### 5.1 Files
 
 ```yaml
-_extends: [auth]
-_auth:
-  roles: [user, admin, support]
-  api_keys: true
-```
-
-The macro creates `user`, `session`, `account`, and `verification`, including Better Auth admin fields. `api_keys: true` also creates `apikey`. Auth foreign keys use indexes and cascade behavior where required.
-
-### 5.2 Files
-
-```yaml
-_extends: [auth, files]
+_extends: [files]
 _files:
   attach_to: [posts]
   owner: true
 ```
 
-The macro creates `file` and one `<table>_file` pivot for every attachment target. Pivot `entityId` uses the attached table's ID type. Owned files require the auth macro; `owner: false` removes `file.userId`.
+The macro creates `file` and one `<table>_file` pivot for every attachment target. Pivot `entityId` uses the attached table's ID type. Owned files require a `user` table; `owner: false` removes `file.userId`.
 
-### 5.3 Idempotency
+For Better Auth table recipes, see [DOCS.md](./DOCS.md).
+
+### 5.2 Idempotency
 
 ```yaml
 _extends: [idempotency]
@@ -197,7 +183,7 @@ type DB = InferSchema<typeof authored>;
 type DB2 = InferDatabase<typeof yamlLiteral>;
 ```
 
-Inference covers tables, columns, references, defaults, generated IDs, nullability, enums, auth, files, and ParanORM's `Selectable`, `Insertable`, and `Updateable` helpers.
+Inference covers tables, columns, references, defaults, generated IDs, nullability, enums, files, and ParanORM's `Selectable`, `Insertable`, and `Updateable` helpers.
 
 `defineSchema` / `schema` dedent by dropping leading blank lines, then stripping the indent of the first remaining line from lines that share that prefix. Top-level keys at column 0 do not strip nested column indentation.
 

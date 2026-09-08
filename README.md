@@ -203,7 +203,9 @@ Inference supports:
 - Foreign-key column types
 - String enum unions
 - `string`, integer, bigint, decimal, boolean, date, timestamp, JSON, and binary columns
-- Generated auth, API-key, file, and attachment tables
+- Generated file and attachment tables
+
+For Better Auth table shapes, see [DOCS.md](./DOCS.md).
 
 ### Tagged YAML templates
 
@@ -222,7 +224,7 @@ function loadSchema() {
 
 The tag dedents leading blank lines and the indent of the first remaining line (same rules as `defineSchema`). Interpolations are rejected. TypeScript does not expose tagged-template text as a string-literal type, so use `defineSchema(yamlLiteral)` when compile-time inference is needed.
 
-See [SPEC.md](./SPEC.md) for the complete authoring format.
+See [SPEC.md](./SPEC.md) for the complete authoring format and [DOCS.md](./DOCS.md) for recipes (including Better Auth).
 
 ## Schema migrations
 

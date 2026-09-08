@@ -496,110 +496,6 @@ const parseAccess = (
   return access;
 };
 
-const authMacro = (config: YamlValue) => {
-  const options = config === null ? {} : expectYamlMapping(config, "_auth");
-  const { roles } = options;
-  if (roles !== undefined) {
-    const roleList = expectYamlStringArray(roles, "_auth.roles");
-    if (roleList.some((role) => role.includes(","))) {
-      fail("_auth.roles must be an array of role names without commas");
-    }
-  }
-  const roleNames = Array.isArray(roles)
-    ? roles.map((role, index) =>
-        expectYamlString(role, `_auth.roles[${index}]`)
-      )
-    : [];
-  const roleModifier =
-    roleNames.length > 0 ? ` enum=[${roleNames.join(",")}] multiple` : "";
-  const tables = {
-    account: {
-      _relations: { user: "belongs_to=user" },
-      accessToken: "string?",
-      accessTokenExpiresAt: "timestamp?",
-      accountId: "string",
-      createdAt: "timestamp default=now",
-      id: "id",
-      idToken: "string?",
-      password: "string?",
-      providerId: "string",
-      refreshToken: "string?",
-      refreshTokenExpiresAt: "timestamp?",
-      scope: "string?",
-      updatedAt: "timestamp default=now",
-      userId: "references=user.id on_delete=cascade index",
-    },
-    session: {
-      _relations: { user: "belongs_to=user" },
-      createdAt: "timestamp default=now",
-      expiresAt: "timestamp",
-      id: "id",
-      impersonatedBy: "string?",
-      ipAddress: "string?",
-      token: "string unique",
-      updatedAt: "timestamp default=now",
-      userAgent: "string?",
-      userId: "references=user.id on_delete=cascade index",
-    },
-    user: {
-      _relations: {
-        accounts: "has_many=account",
-        sessions: "has_many=session",
-      },
-      banExpires: "timestamp?",
-      banReason: "string?",
-      banned: "boolean default=false",
-      createdAt: "timestamp default=now",
-      email: "string unique",
-      emailVerified: "boolean default=false",
-      id: "id",
-      image: "string?",
-      name: "string",
-      role: `string default="user"${roleModifier}`,
-      updatedAt: "timestamp default=now",
-    },
-    verification: {
-      createdAt: "timestamp default=now",
-      expiresAt: "timestamp",
-      id: "id",
-      identifier: "string",
-      updatedAt: "timestamp default=now",
-      value: "string",
-    },
-  };
-  if (options.api_keys === true) {
-    return {
-      ...tables,
-      apikey: {
-        _relations: { user: "belongs_to=user" },
-        configId: 'string default="default" index',
-        createdAt: "timestamp default=now",
-        enabled: "boolean default=true",
-        expiresAt: "timestamp?",
-        id: "id",
-        key: "string index",
-        lastRefillAt: "timestamp?",
-        lastRequest: "timestamp?",
-        metadata: "string?",
-        name: "string?",
-        permissions: "string?",
-        prefix: "string?",
-        rateLimitEnabled: "boolean default=true",
-        rateLimitMax: "int?",
-        rateLimitTimeWindow: "int?",
-        referenceId: "references=user.id on_delete=cascade index",
-        refillAmount: "int?",
-        refillInterval: "int?",
-        remaining: "int?",
-        requestCount: "int default=0",
-        start: "string?",
-        updatedAt: "timestamp default=now",
-      },
-    } satisfies Record<string, YamlValue>;
-  }
-  return tables satisfies Record<string, YamlValue>;
-};
-
 const filesMacro = (config: YamlValue) => {
   const options = expectYamlMapping(config, "_files");
   const attachTo = expectYamlStringArray(
@@ -650,7 +546,6 @@ const idempotencyMacro = () =>
   }) satisfies Record<string, YamlValue>;
 
 export const builtinMacros: SchemaMacroRegistry = {
-  auth: ({ config }) => authMacro(config),
   files: ({ config }) => filesMacro(config),
   idempotency: () => idempotencyMacro(),
 };

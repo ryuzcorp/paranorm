@@ -89,7 +89,9 @@ type DedentSource<Source extends string> =
 type BeforeComment<S extends string> = S extends `${infer V}#${string}`
   ? TrimRight<V>
   : S;
-type Merge<A, B> = Omit<A, keyof B> & B;
+type Merge<A, B> = Omit<A, keyof B> & B extends infer O
+  ? { [K in keyof O]: O[K] }
+  : never;
 type AddTable<Tables, Name extends string> = Name extends keyof Tables
   ? Tables
   : Tables & { [K in Name]: EmptyTableMap };
@@ -164,101 +166,6 @@ type Extensions<Source extends string> = ListItems<
 type HasExtension<Source extends string, Name extends string> =
   Name extends Extensions<Source> ? true : false;
 
-type AuthRoleDefinition<Source extends string> = [
-  SourceLineValue<Source, "roles">,
-] extends [never]
-  ? "string default=user"
-  : `string default=user enum=${SourceLineValue<Source, "roles">} multiple`;
-interface AuthRaw<Source extends string> {
-  user: {
-    id: "id";
-    name: "string";
-    email: "string unique";
-    emailVerified: "boolean default=false";
-    image: "string?";
-    role: AuthRoleDefinition<Source>;
-    banned: "boolean default=false";
-    banReason: "string?";
-    banExpires: "timestamp?";
-    createdAt: "timestamp default=now";
-    updatedAt: "timestamp default=now";
-  };
-  session: {
-    id: "id";
-    expiresAt: "timestamp";
-    token: "string unique";
-    ipAddress: "string?";
-    userAgent: "string?";
-    userId: "references=user.id";
-    impersonatedBy: "string?";
-    createdAt: "timestamp default=now";
-    updatedAt: "timestamp default=now";
-  };
-  account: {
-    id: "id";
-    accountId: "string";
-    providerId: "string";
-    userId: "references=user.id";
-    accessToken: "string?";
-    refreshToken: "string?";
-    idToken: "string?";
-    accessTokenExpiresAt: "timestamp?";
-    refreshTokenExpiresAt: "timestamp?";
-    scope: "string?";
-    password: "string?";
-    createdAt: "timestamp default=now";
-    updatedAt: "timestamp default=now";
-  };
-  verification: {
-    id: "id";
-    identifier: "string";
-    value: "string";
-    expiresAt: "timestamp";
-    createdAt: "timestamp default=now";
-    updatedAt: "timestamp default=now";
-  };
-}
-interface ApiKeyRaw {
-  apikey: {
-    id: "id";
-    configId: "string default=default";
-    name: "string?";
-    start: "string?";
-    prefix: "string?";
-    key: "string";
-    referenceId: "references=user.id";
-    refillInterval: "int?";
-    refillAmount: "int?";
-    lastRefillAt: "timestamp?";
-    enabled: "boolean default=true";
-    rateLimitEnabled: "boolean default=true";
-    rateLimitTimeWindow: "int?";
-    rateLimitMax: "int?";
-    requestCount: "int default=0";
-    remaining: "int?";
-    lastRequest: "timestamp?";
-    expiresAt: "timestamp?";
-    permissions: "string?";
-    metadata: "string?";
-    createdAt: "timestamp default=now";
-    updatedAt: "timestamp default=now";
-  };
-}
-type ApiKeysEnabled<Source extends string> = [
-  SourceLineValue<Source, "api_keys">,
-] extends [never]
-  ? false
-  : SourceLineValue<Source, "api_keys"> extends "true"
-    ? true
-    : false;
-type AuthTables<Source extends string> =
-  HasExtension<Source, "auth"> extends true
-    ? Merge<
-        AuthRaw<Source>,
-        ApiKeysEnabled<Source> extends true ? ApiKeyRaw : EmptyTableMap
-      >
-    : EmptyTableMap;
-
 interface FileRaw<Owned extends boolean> {
   file: Merge<
     {
@@ -304,7 +211,7 @@ type FilesTables<Source extends string> =
     : EmptyTableMap;
 
 type RawTables<Source extends string> = Merge<
-  Merge<AuthTables<Source>, FilesTables<Source>>,
+  FilesTables<Source>,
   ParseExplicitTables<Source>
 >;
 type FirstToken<Definition extends string> =
@@ -386,18 +293,20 @@ type SchemaColumn<Tables, Definition extends string> =
         >;
 
 /** Infers the database interface from a literal YAML schema string. */
-export type InferDatabase<Source extends string> = {
-  [Table in keyof RawTables<DedentSource<Source>>]: {
-    [Column in keyof RawTables<DedentSource<Source>>[Table]]: RawTables<
-      DedentSource<Source>
-    >[Table][Column] extends string
-      ? SchemaColumn<
-          RawTables<DedentSource<Source>>,
-          RawTables<DedentSource<Source>>[Table][Column]
-        >
-      : never;
-  };
-};
+export type InferDatabase<Source extends string> =
+  DedentSource<Source> extends infer Dedented extends string
+    ? RawTables<Dedented> extends infer Tables
+      ? {
+          [Table in keyof Tables]: {
+            [
+              Column in keyof Tables[Table]
+            ]: Tables[Table][Column] extends string
+              ? SchemaColumn<Tables, Tables[Table][Column]>
+              : never;
+          };
+        }
+      : never
+    : never;
 
 /** A parsed runtime schema carrying its inferred database type. */
 export type TypedSchema<Source extends string> = AuthoredSchema & {
