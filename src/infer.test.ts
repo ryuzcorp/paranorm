@@ -1,5 +1,20 @@
 import { describe, expect, expectTypeOf, test } from "bun:test";
 
+import {
+  betterAuthMigrator,
+  betterAuthSchema,
+  betterAuthStressSchema,
+} from "./fixtures/better-auth-schema.ts";
+import type {
+  BetterAuthDB,
+  NewTask,
+  Session,
+  StressDB,
+  StressMember,
+  StressTask,
+  Task,
+  User,
+} from "./fixtures/better-auth-schema.ts";
 import { defineSchema, schema as yamlSchema } from "./index.ts";
 import type {
   InferSchema,
@@ -170,5 +185,37 @@ notes:
     expectTypeOf<
       Selectable<RefDB["children"]>["parent_id"]
     >().toEqualTypeOf<string>();
+  });
+
+  test("infers the DOCS Better Auth recipe in one defineSchema", () => {
+    expectTypeOf<Task>().toEqualTypeOf<{
+      id: string;
+      userId: string;
+      text: string;
+      completed: boolean;
+    }>();
+    expectTypeOf<NewTask>().toMatchObjectType<{
+      text: string;
+    }>();
+    expectTypeOf<NewTask["completed"]>().toEqualTypeOf<boolean | undefined>();
+    expectTypeOf<User["id"]>().toEqualTypeOf<string>();
+    expectTypeOf<User["email"]>().toEqualTypeOf<string>();
+    expectTypeOf<Session["userId"]>().toEqualTypeOf<string>();
+    expectTypeOf<BetterAuthDB>().toEqualTypeOf<
+      InferSchema<typeof betterAuthSchema>
+    >();
+    expect(betterAuthSchema.tables.tasks).toBeDefined();
+    expect(betterAuthSchema.tables.user).toBeDefined();
+    expect(betterAuthMigrator.plan().length).toBeGreaterThan(0);
+  });
+
+  test("infers a stress schema larger than the DOCS auth recipe", () => {
+    expectTypeOf<StressTask["text"]>().toEqualTypeOf<string>();
+    expectTypeOf<StressTask["priority"]>().toEqualTypeOf<number>();
+    expectTypeOf<StressTask["dueAt"]>().toEqualTypeOf<Date | null>();
+    expectTypeOf<StressMember["organizationId"]>().toEqualTypeOf<string>();
+    expectTypeOf<StressDB["twoFactor"]>().not.toBeNever();
+    expect(betterAuthStressSchema.tables.organization).toBeDefined();
+    expect(betterAuthStressSchema.tables.member).toBeDefined();
   });
 });

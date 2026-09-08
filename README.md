@@ -205,7 +205,7 @@ Inference supports:
 - `string`, integer, bigint, decimal, boolean, date, timestamp, JSON, and binary columns
 - Generated file and attachment tables
 
-For Better Auth table shapes, see [DOCS.md](./DOCS.md).
+For Better Auth table shapes, see [DOCS.md](./DOCS.md) — put auth and app tables in one `defineSchema`, then `InferSchema` / `createMigrator` on that value.
 
 ### Tagged YAML templates
 

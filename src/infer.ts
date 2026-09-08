@@ -76,12 +76,18 @@ type StripIndent<Line extends string, Prefix extends string> = Prefix extends ""
   : Line extends `${Prefix}${infer StripIndentRest}`
     ? StripIndentRest
     : Line;
+/** Tail-recursive so Better Auth–sized YAML does not hit TS2589 on dedent alone. */
 type StripLineIndent<
   S extends string,
   Prefix extends string,
+  Acc extends string = "",
 > = S extends `${infer StripLineLine}\n${infer StripLineRest}`
-  ? `${StripIndent<StripLineLine, Prefix>}\n${StripLineIndent<StripLineRest, Prefix>}`
-  : StripIndent<S, Prefix>;
+  ? StripLineIndent<
+      StripLineRest,
+      Prefix,
+      `${Acc}${StripIndent<StripLineLine, Prefix>}\n`
+    >
+  : `${Acc}${StripIndent<S, Prefix>}`;
 type DedentSource<Source extends string> =
   DropLeadingBlankLines<Source> extends infer Content extends string
     ? StripLineIndent<Content, LeadingIndent<Content>>
@@ -89,7 +95,11 @@ type DedentSource<Source extends string> =
 type BeforeComment<S extends string> = S extends `${infer V}#${string}`
   ? TrimRight<V>
   : S;
-type Merge<A, B> = Omit<A, keyof B> & B extends infer O
+/** Cheap intersection merge during parse; flatten once in `InferDatabase`. */
+type Merge<A, B> = Omit<A, keyof B> & B;
+type Simplify<T> = {
+  [K in keyof T]: T[K];
+} extends infer O
   ? { [K in keyof O]: O[K] }
   : never;
 type AddTable<Tables, Name extends string> = Name extends keyof Tables
@@ -296,15 +306,15 @@ type SchemaColumn<Tables, Definition extends string> =
 export type InferDatabase<Source extends string> =
   DedentSource<Source> extends infer Dedented extends string
     ? RawTables<Dedented> extends infer Tables
-      ? {
-          [Table in keyof Tables]: {
+      ? Simplify<{
+          [Table in keyof Tables]: Simplify<{
             [
               Column in keyof Tables[Table]
             ]: Tables[Table][Column] extends string
               ? SchemaColumn<Tables, Tables[Table][Column]>
               : never;
-          };
-        }
+          }>;
+        }>
       : never
     : never;
 

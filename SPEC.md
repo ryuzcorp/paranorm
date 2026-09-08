@@ -189,6 +189,8 @@ Inference covers tables, columns, references, defaults, generated IDs, nullabili
 
 The `schema` tagged template is a runtime authoring helper and may be aliased to `yaml`. TypeScript does not expose tagged-template static segments as literal tuple types, so `InferSchema` inference requires `defineSchema(...)` with a literal or `const` string.
 
+One `defineSchema` literal is enough for Better Auth–scale YAML (the [DOCS.md](./DOCS.md) recipe plus app tables): `InferSchema` and `createMigrator([schema])` share that value. Type-level parsing is sized for that class of schema and for larger plugin sets (on the order of dozens of tables under TypeScript 7). If you eventually hit `TS2589`, prefer generated declarations (§13) over splitting auth and app tables into dual schemas.
+
 ## 8. Query model API
 
 ```ts

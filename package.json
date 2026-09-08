@@ -1,6 +1,6 @@
 {
   "name": "paranorm",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "YAML schema inference, migrations, and a typed model API for Effect SQL.",
   "keywords": [
     "database",

@@ -2,7 +2,7 @@
 
 ## Recipe: Better Auth schema
 
-ParanORM does not ship an auth macro. Author Better Auth tables in your YAML (or a `const` string you interpolate into `defineSchema`) and keep them aligned with your Better Auth plugins.
+ParanORM does not ship an auth macro. Author Better Auth tables in **one** `defineSchema` literal alongside your app tables, then `InferSchema` and `createMigrator([schema])` from that single value. Keep the YAML aligned with your Better Auth plugins.
 
 Target shape below matches **better-auth@1.7.x** with the **admin** plugin fields on `user` / `session`. Add plugin tables (e.g. `passkey`) only when that plugin is enabled.
 
@@ -83,11 +83,17 @@ export const schema = defineSchema(`
     _relations:
       user: belongs_to=user
 
-  # your app tables…
+  tasks:
+    id: id(uuidv4)
+    userId: references=user.id on_delete=cascade index
+    text: string
+    completed: boolean default=false
 `);
 
 export type DB = InferSchema<typeof schema>;
 ```
+
+`createMigrator([schema])` and `paranorm<DB>()` use that same authored value — no dual schema.
 
 ### Runtime tips
 
