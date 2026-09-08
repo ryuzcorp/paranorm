@@ -1,6 +1,6 @@
 {
   "name": "paranorm",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "YAML schema inference, migrations, and a typed model API for Effect SQL.",
   "keywords": [
     "database",
@@ -39,13 +39,12 @@
     "fmt": "oxfmt",
     "typecheck": "tsc --noEmit",
     "check": "ultracite check",
-    "prepublishOnly": "bun run check",
+    "prepublishOnly": "bun test && bun run check && bun run typecheck && bun run build",
     "fix": "ultracite fix",
     "prepare": "husky"
   },
   "dependencies": {
     "confbox": "^0.2.4",
-    "dedent": "^1.7.2",
     "effect": "^4.0.0-rc.112"
   },
   "devDependencies": {

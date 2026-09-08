@@ -660,8 +660,9 @@ const createModel = <Table>(tableName: string): ParanOrmModel<Table> => {
           count: totalCount,
           endCursor:
             lastRow === undefined ? null : encodeCursor(lastRow, orderBy),
-          hasNext: direction === "after" ? hasMore : after !== undefined,
-          hasPrevious: direction === "before" ? hasMore : before !== undefined,
+          hasNext: before !== undefined || (direction === "after" && hasMore),
+          hasPrevious:
+            after !== undefined || (direction === "before" && hasMore),
           startCursor:
             firstRow === undefined ? null : encodeCursor(firstRow, orderBy),
         },

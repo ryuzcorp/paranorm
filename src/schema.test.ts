@@ -4,9 +4,13 @@ import { SqliteClient } from "@effect/sql-sqlite-node";
 import { Effect } from "effect";
 
 import {
+  applySchemaDiff,
+  columnChanged,
   createMigrator,
   defineSchema,
   diffSchemas,
+  isDestructiveDiff,
+  migrateSchemasToLatest,
   parseColumn,
   parseSchema,
   SchemaMigrationProvider,
@@ -186,6 +190,19 @@ describe("schema authoring", () => {
     }
     expect(file.columns.userId).toBeUndefined();
   });
+
+  test("expands the idempotency macro", () => {
+    const schema = parseSchema(
+      `_version: "1.0.0"\n_extends: [idempotency]\ntasks:\n  id: id\n`
+    );
+    const table = schema.tables.paranorm_idempotency;
+    expect(table).toBeDefined();
+    if (!table) {
+      throw new Error("expected paranorm_idempotency table");
+    }
+    expect(table.columns.key).toBeDefined();
+    expect(table.columns.created_at ?? table.columns.createdAt).toBeDefined();
+  });
 });
 
 describe("schema migrations", () => {
@@ -279,6 +296,196 @@ describe("schema migrations", () => {
 
         const again = yield* migrator.migrate;
         expect(again).toEqual([]);
+      }).pipe(
+        Effect.provide(
+          SqliteClient.layer({ disableWAL: true, filename: ":memory:" })
+        ),
+        Effect.scoped
+      )
+    );
+  });
+
+  test("diffs removals, indexes, uniques, and destructive flags", () => {
+    const from = parseSchema(`
+_version: "1.0.0"
+posts:
+  id: id
+  slug: string unique
+  title: string index
+  body: string
+tags:
+  id: id
+`);
+    const to = parseSchema(`
+_version: "2.0.0"
+posts:
+  id: id
+  slug: string
+  title: string
+  summary: string unique
+`);
+    const diff = diffSchemas(from, to);
+    expect(diff.removedTables.map((table) => table.name)).toEqual(["tags"]);
+    expect(
+      diff.removedColumns.map(({ table, column }) => `${table}.${column.name}`)
+    ).toEqual(["posts.body"]);
+    expect(diff.removedIndexes).toContainEqual({
+      column: "title",
+      table: "posts",
+    });
+    expect(diff.removedUniqueConstraints).toContainEqual({
+      columns: ["slug"],
+      table: "posts",
+    });
+    expect(diff.addedUniqueConstraints).toContainEqual({
+      columns: ["summary"],
+      table: "posts",
+    });
+    expect(isDestructiveDiff(diff)).toBe(true);
+    const slug = from.tables.posts?.columns.slug;
+    const nextSlug = to.tables.posts?.columns.slug;
+    expect(slug && nextSlug && columnChanged(slug, nextSlug)).toBe(true);
+  });
+
+  test("blocks destructive migrations unless allowed", () => {
+    const first = `_version: "1.0.0"\nitems:\n  id: id\n  name: string\n`;
+    const second = `_version: "2.0.0"\nitems:\n  id: id\n`;
+    const migrator = createMigrator([first, second]);
+    expect(() => migrator.validate()).toThrow("allowDestructive");
+    expect(migrator.plan()[1]?.destructive).toBe(true);
+
+    const allowed = createMigrator([first, second], {
+      allowDestructive: true,
+    });
+    expect(allowed.validate()).toHaveLength(2);
+    expect(
+      allowed
+        .sql()
+        .flatMap((migration) =>
+          migration.statements.map((statement) => statement.sql)
+        )
+    ).toContain('ALTER TABLE "items" DROP COLUMN "name"');
+  });
+
+  test("rejects unsupported sqlite column changes when compiling SQL", () => {
+    const typeChange = createMigrator([
+      `_version: "1.0.0"\nitems:\n  id: id\n  score: int\n`,
+      `_version: "2.0.0"\nitems:\n  id: id\n  score: string\n`,
+    ]);
+    expect(typeChange.plan()).toHaveLength(2);
+    expect(typeChange.plan()[1]?.operations).toContainEqual({
+      column: "score",
+      destructive: true,
+      kind: "changeColumn",
+      table: "items",
+    });
+    expect(() => typeChange.sql()).toThrow("Changing column type");
+
+    const nullability = createMigrator([
+      `_version: "1.0.0"\nitems:\n  id: id\n  name: string\n`,
+      `_version: "2.0.0"\nitems:\n  id: id\n  name: string?\n`,
+    ]);
+    expect(nullability.plan()).toHaveLength(2);
+    expect(() => nullability.sql()).toThrow("Changing nullability");
+
+    const defaults = createMigrator([
+      `_version: "1.0.0"\nitems:\n  id: id\n  name: string\n`,
+      `_version: "2.0.0"\nitems:\n  id: id\n  name: string default="x"\n`,
+    ]);
+    expect(defaults.plan()).toHaveLength(2);
+    expect(() => defaults.sql()).toThrow("Changing defaults");
+  });
+
+  test("rejects empty or non-ascending schema lists", () => {
+    expect(() => new SchemaMigrationProvider({ schemas: [] })).toThrow(
+      "at least one schema"
+    );
+    expect(
+      () =>
+        new SchemaMigrationProvider({
+          schemas: [
+            { content: `_version: "2.0.0"\na:\n  id: id\n` },
+            { content: `_version: "1.0.0"\na:\n  id: id\n` },
+          ],
+        })
+    ).toThrow("ascending version order");
+  });
+
+  test("normalizes migrator inputs and renders FK create SQL", () => {
+    const authored = defineSchema(`
+_version: "1.0.0"
+parents:
+  id: id
+children:
+  id: id
+  parent_id: string references=parents.id on_delete=cascade index
+`);
+    const migrator = createMigrator(
+      [{ source: authored.source, version: "1.0.0" }],
+      { cuidDefaultSql: "'cuid'" }
+    );
+    const [preview] = migrator.sql();
+    expect(preview?.name).toBe("1.0.0");
+    const sqlText =
+      preview?.statements.map((statement) => statement.sql).join("\n") ?? "";
+    expect(sqlText).toContain("FOREIGN KEY");
+    expect(sqlText).toContain("ON DELETE CASCADE");
+    expect(sqlText).toContain("CREATE INDEX");
+    expect(sqlText).toContain("DEFAULT ('cuid')");
+  });
+
+  test("applySchemaDiff and migrateSchemasToLatest enforce policy", async () => {
+    const from = parseSchema(
+      `_version: "1.0.0"\nitems:\n  id: id\n  name: string\n`
+    );
+    const to = parseSchema(`_version: "2.0.0"\nitems:\n  id: id\n`);
+    const diff = diffSchemas(from, to);
+
+    await expect(
+      Effect.runPromise(
+        applySchemaDiff(diff).pipe(
+          Effect.provide(
+            SqliteClient.layer({ disableWAL: true, filename: ":memory:" })
+          ),
+          Effect.scoped
+        )
+      )
+    ).rejects.toThrow("allowDestructive");
+
+    await Effect.runPromise(
+      Effect.gen(function* applyAllowed() {
+        const sql = yield* SqliteClient.SqliteClient;
+        yield* sql`CREATE TABLE items (id text primary key, name text not null)`;
+        yield* applySchemaDiff(diff, {
+          allowDestructive: true,
+        });
+        const columns = yield* sql<{
+          name: string;
+        }>`pragma table_info('items')`;
+        expect(columns.map((column) => column.name)).toEqual(["id"]);
+      }).pipe(
+        Effect.provide(
+          SqliteClient.layer({ disableWAL: true, filename: ":memory:" })
+        ),
+        Effect.scoped
+      )
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* migrateLatest() {
+        const applied = yield* migrateSchemasToLatest({
+          schemas: [
+            {
+              content: `_version: "1.0.0"\nnotes:\n  id: id\n  body: string\n`,
+            },
+          ],
+        });
+        expect(applied).toEqual([[1, "1.0.0"]]);
+        const sql = yield* SqliteClient.SqliteClient;
+        const tables = yield* sql<{ name: string }>`
+          SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'notes'
+        `;
+        expect(tables).toHaveLength(1);
       }).pipe(
         Effect.provide(
           SqliteClient.layer({ disableWAL: true, filename: ":memory:" })

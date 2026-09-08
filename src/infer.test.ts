@@ -92,6 +92,17 @@ describe("YAML schema type inference", () => {
     expect(schema.version).toBe("1.0.0");
   });
 
+  test("preserves child indentation when top-level keys are unindented", () => {
+    const authored = defineSchema(`
+_version: "1.0.0"
+notes:
+  id: id
+  body: string
+`);
+    expect(authored.source).toContain("\n  id: id\n");
+    expect(authored.tables.notes?.columns.body?.kind).toBe("string");
+  });
+
   test("dedents and parses interpolation-free schema tagged templates", () => {
     const tagged = yamlSchema`
       _version: "1.0.0"
@@ -115,5 +126,52 @@ describe("YAML schema type inference", () => {
       throw new Error("expected body column");
     }
     expect(body.kind).toBe("string");
+  });
+
+  test("rejects schema tagged-template interpolation at runtime", () => {
+    expect(() => interpolationIsRejected("posts")).toThrow(
+      "do not support interpolation"
+    );
+  });
+
+  test("infers binary and ownerless file shapes", () => {
+    const owned = `
+      _version: "1.0.0"
+      _extends: [files]
+      _files:
+        owner: false
+        attach_to: [assets]
+      assets:
+        id: id
+        blob: binary
+    `;
+    type FilesDB = InferDatabase<typeof owned>;
+    expectTypeOf<
+      Selectable<FilesDB["assets"]>["blob"]
+    >().toEqualTypeOf<Uint8Array>();
+    expectTypeOf<Selectable<FilesDB["file"]>>().toEqualTypeOf<{
+      id: string;
+      key: string;
+      name: string;
+      type: string;
+      size: number;
+      createdAt: Date;
+      updatedAt: Date;
+    }>();
+  });
+
+  test("infers bare reference column types from the target", () => {
+    const source = `
+      _version: "1.0.0"
+      parents:
+        id: id(bigint)
+      children:
+        id: id
+        parent_id: references=parents.id
+    `;
+    type RefDB = InferDatabase<typeof source>;
+    expectTypeOf<
+      Selectable<RefDB["children"]>["parent_id"]
+    >().toEqualTypeOf<string>();
   });
 });

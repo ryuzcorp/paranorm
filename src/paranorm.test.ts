@@ -325,4 +325,159 @@ describe("ParanOrm", () => {
       )
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
+
+  test("supports AND, NOT, comparisons, and isNull false", async () => {
+    const rows = await run(
+      query.post.findMany({
+        where: {
+          AND: [{ authorId: aliceId }, { title: { not: "Second" } }],
+          NOT: { body: { isNull: false } },
+        },
+      }),
+      shared
+    );
+    expect(rows.map((row) => row.title)).toEqual(["First"]);
+
+    const ranged = await run(
+      query.post.findMany({
+        where: {
+          id: { gte: firstPostId, lt: firstPostId + 2 },
+        },
+      }),
+      shared
+    );
+    expect(ranged).toHaveLength(2);
+
+    const setFilters = await run(
+      query.author.findMany({
+        where: {
+          name: { in: ["Alice", "Nobody"], notIn: ["Nobody"] },
+        },
+      }),
+      shared
+    );
+    expect(setFilters.map((row) => row.name)).toEqual(["Alice"]);
+  });
+
+  test("createMany empty, findFirst null, and upsert conflict key", async () => {
+    await run(
+      Effect.gen(function* edges() {
+        yield* createSchema();
+        expect(yield* query.author.createMany({ data: [] })).toEqual([]);
+        expect(
+          yield* query.author.findFirst({ where: { email: "nope@x.com" } })
+        ).toBeNull();
+        const failed = yield* query.author
+          .upsert({
+            create: { email: "x@y.com", name: "X" },
+            update: { name: "Y" },
+            where: {},
+          })
+          .pipe(Effect.flip);
+        expect(failed).toBeInstanceOf(ParanOrmError);
+        expect(failed).toMatchObject({ code: "BAD_REQUEST" });
+      })
+    );
+  });
+
+  test("supports skip pagination and before cursors", async () => {
+    const offsetPage = await run(
+      query.post.paginate({
+        orderBy: [{ id: "asc" }],
+        skip: 1,
+        take: 1,
+      }),
+      shared
+    );
+    expect(offsetPage.data).toHaveLength(1);
+    expect(offsetPage.pagination).toMatchObject({
+      endCursor: null,
+      hasNext: true,
+      hasPrevious: true,
+      startCursor: null,
+    });
+
+    const first = await run(
+      query.post.paginate({
+        orderBy: [{ id: "asc" }],
+        take: 1,
+      }),
+      shared
+    );
+    const { endCursor } = first.pagination;
+    expect(endCursor).toBeDefined();
+    if (!endCursor) {
+      throw new Error("expected end cursor");
+    }
+    const second = await run(
+      query.post.paginate({
+        after: endCursor,
+        orderBy: [{ id: "asc" }],
+        take: 1,
+      }),
+      shared
+    );
+    expect(second.pagination.hasPrevious).toBe(true);
+    const { startCursor } = second.pagination;
+    expect(startCursor).toBeDefined();
+    if (!startCursor) {
+      throw new Error("expected start cursor");
+    }
+    const previous = await run(
+      query.post.paginate({
+        before: startCursor,
+        orderBy: [{ id: "asc" }],
+        take: 2,
+      }),
+      shared
+    );
+    expect(previous.data).toHaveLength(1);
+    expect(previous.pagination.hasNext).toBe(true);
+    expect(previous.pagination.hasPrevious).toBe(false);
+    const [previousRow] = previous.data;
+    const [firstRow] = first.data;
+    expect(previousRow).toBeDefined();
+    expect(firstRow).toBeDefined();
+    if (!(previousRow && firstRow)) {
+      throw new Error("expected pagination rows");
+    }
+    expect(previousRow.id).toBe(firstRow.id);
+    expect(previous.pagination.startCursor).toBeTruthy();
+    expect(previous.pagination.endCursor).toBeTruthy();
+  });
+
+  test("supports multi-column keyset cursors", async () => {
+    await run(
+      Effect.gen(function* multiCursor() {
+        yield* createSchema();
+        const author = yield* query.author.create({
+          data: { email: "multi@example.com", name: "Multi" },
+        });
+        yield* query.post.createMany({
+          data: [
+            { authorId: author.id, body: null, title: "A" },
+            { authorId: author.id, body: null, title: "A" },
+            { authorId: author.id, body: null, title: "B" },
+          ],
+        });
+        const first = yield* query.post.paginate({
+          orderBy: [{ title: "asc" }, { id: "asc" }],
+          take: 2,
+        });
+        expect(first.data).toHaveLength(2);
+        const { endCursor } = first.pagination;
+        expect(endCursor).toBeDefined();
+        if (!endCursor) {
+          throw new Error("expected multi-column end cursor");
+        }
+        const second = yield* query.post.paginate({
+          after: endCursor,
+          orderBy: [{ title: "asc" }, { id: "asc" }],
+          take: 2,
+        });
+        expect(second.data).toHaveLength(1);
+        expect(second.data[0]?.title).toBe("B");
+      })
+    );
+  });
 });

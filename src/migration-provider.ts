@@ -43,6 +43,12 @@ export type CreateMigratorOptions = Omit<
   "schemas"
 >;
 
+/** Options for rendering / applying a precomputed schema diff. */
+export type ApplySchemaDiffOptions = Pick<
+  SchemaMigrationProviderOptions,
+  "allowDestructive" | "cuidDefaultSql" | "dialect" | "uuidDefaultSql"
+>;
+
 export interface MigrationPlanOperation {
   kind:
     | "addTable"
@@ -169,7 +175,7 @@ const literalDefaultExpression = (
 
 const defaultExpression = (
   column: ColumnDefinition,
-  options: SchemaMigrationProviderOptions
+  options: ApplySchemaDiffOptions
 ): string | undefined => {
   const value = column.default;
   if (column.generation === "uuidv4") {
@@ -195,7 +201,7 @@ const defaultExpression = (
 
 const columnSql = (
   column: ColumnDefinition,
-  options: SchemaMigrationProviderOptions
+  options: ApplySchemaDiffOptions
 ): string => {
   const parts = [
     quoteIdent(column.name),
@@ -219,7 +225,7 @@ const columnSql = (
 
 const createTableSql = (
   table: TableDefinition,
-  options: SchemaMigrationProviderOptions
+  options: ApplySchemaDiffOptions
 ): string => {
   const lines = Object.values(table.columns).map((column) =>
     columnSql(column, options)
@@ -310,7 +316,7 @@ const pushForeignKey = (
 
 const pushAddedTableStatements = (
   diff: SchemaDiff,
-  options: SchemaMigrationProviderOptions,
+  options: ApplySchemaDiffOptions,
   push: (sql: string) => void
 ): void => {
   for (const table of diff.addedTables) {
@@ -325,7 +331,7 @@ const pushAddedTableStatements = (
 
 const pushAddedColumnStatements = (
   diff: SchemaDiff,
-  options: SchemaMigrationProviderOptions,
+  options: ApplySchemaDiffOptions,
   push: (sql: string) => void
 ): void => {
   for (const entry of diff.addedColumns) {
@@ -342,7 +348,7 @@ const pushAddedColumnStatements = (
 
 const pushChangedColumnStatements = (
   diff: SchemaDiff,
-  options: SchemaMigrationProviderOptions,
+  options: ApplySchemaDiffOptions,
   push: (sql: string) => void
 ): void => {
   for (const entry of diff.changedColumns) {
@@ -406,7 +412,7 @@ const pushAddedConstraintStatements = (
 
 const schemaDiffStatements = (
   diff: SchemaDiff,
-  options: SchemaMigrationProviderOptions
+  options: ApplySchemaDiffOptions = {}
 ): MigrationStatement[] => {
   const statements: MigrationStatement[] = [];
   const push = (sql: string) => statements.push({ parameters: [], sql });
@@ -422,8 +428,16 @@ const schemaDiffStatements = (
 interface InternalSchemaPlan {
   plan: SchemaMigrationPlan;
   diff: SchemaDiff;
-  statements: MigrationStatement[];
+  statements?: MigrationStatement[];
 }
+
+const resolvePlanStatements = (
+  entry: InternalSchemaPlan,
+  options: ApplySchemaDiffOptions
+): MigrationStatement[] => {
+  entry.statements ??= schemaDiffStatements(entry.diff, options);
+  return entry.statements;
+};
 
 const operationsFromDiff = (diff: SchemaDiff): MigrationPlanOperation[] => [
   ...diff.addedTables.map((table) => ({
@@ -506,7 +520,6 @@ const createSchemaPlans = (
     return {
       diff,
       plan,
-      statements: schemaDiffStatements(diff, provider.options),
     };
   });
 
@@ -570,6 +583,7 @@ export class SchemaMigrationProvider {
       up: Effect.Effect<void, SqlError | Error, SqlClient>;
     }
   > {
+    const { options } = this;
     return Object.fromEntries(
       createSchemaPlans(this).map((entry) => [
         entry.plan.name,
@@ -578,7 +592,7 @@ export class SchemaMigrationProvider {
           name: entry.plan.name,
           up: Effect.gen(function* runMigration() {
             const sql = yield* SqlClient;
-            for (const statement of entry.statements) {
+            for (const statement of resolvePlanStatements(entry, options)) {
               yield* sql.unsafe(statement.sql, statement.parameters);
             }
           }),
@@ -611,7 +625,10 @@ export const createMigrator = (
         migrationKey(entry.plan.id, entry.plan.name),
         Effect.gen(function* runMigration() {
           const sql = yield* SqlClient;
-          for (const statement of entry.statements) {
+          for (const statement of resolvePlanStatements(
+            entry,
+            provider.options
+          )) {
             yield* sql.unsafe(statement.sql, statement.parameters);
           }
         }),
@@ -648,7 +665,7 @@ export const createMigrator = (
       if (done.has(entry.plan.id)) {
         continue;
       }
-      for (const statement of entry.statements) {
+      for (const statement of resolvePlanStatements(entry, provider.options)) {
         yield* sql.unsafe(statement.sql, statement.parameters);
       }
       yield* sql.unsafe(
@@ -668,7 +685,7 @@ export const createMigrator = (
     sql: () =>
       pending().map((entry) => ({
         ...entry.plan,
-        statements: entry.statements,
+        statements: resolvePlanStatements(entry, provider.options),
       })),
     validate: () => {
       const entries = pending();
@@ -687,7 +704,7 @@ export const createMigrator = (
 
 export const applySchemaDiff = (
   diff: SchemaDiff,
-  options: SchemaMigrationProviderOptions
+  options: ApplySchemaDiffOptions = {}
 ): Effect.Effect<void, SqlError | Error, SqlClient> =>
   Effect.gen(function* applySchemaDiffEffect() {
     if (isDestructiveDiff(diff) && !options.allowDestructive) {

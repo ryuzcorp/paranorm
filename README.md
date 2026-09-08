@@ -220,7 +220,7 @@ function loadSchema() {
 }
 ```
 
-The tag uses [`dedent`](https://github.com/dmnd/dedent). Interpolations are rejected. TypeScript does not expose tagged-template text as a string-literal type, so use `defineSchema(yamlLiteral)` when compile-time inference is needed.
+The tag dedents leading blank lines and the indent of the first remaining line (same rules as `defineSchema`). Interpolations are rejected. TypeScript does not expose tagged-template text as a string-literal type, so use `defineSchema(yamlLiteral)` when compile-time inference is needed.
 
 See [SPEC.md](./SPEC.md) for the complete authoring format.
 
@@ -264,6 +264,30 @@ const SqlLive = Layer.provideMerge(
 );
 ```
 
-`SchemaMigrationProvider` and `migrateSchemasToLatest` remain available as lower-level APIs. Forward destructive changes require `allowDestructive: true`.
+`SchemaMigrationProvider` and `migrateSchemasToLatest` remain available as lower-level APIs. Forward destructive changes require `allowDestructive: true`. Unsupported SQLite column rewrites fail at `sql()` / `migrate`, not when constructing the migrator.
 
 Migration DDL currently renders SQLite SQL (`dialect: "sqlite"`). Pair it with SQLite-compatible drivers (D1, `sql-sqlite-node`, Bun, wasm, …). Query APIs remain driver-agnostic regardless.
+
+## Write notify and idempotency
+
+```ts
+import { afterWrite, once, defineSchema } from "paranorm";
+
+const schema = defineSchema(`
+  _version: "1.0.0"
+  _extends: [idempotency]
+  posts:
+    id: id
+    title: string
+`);
+
+yield *
+  orm.posts
+    .create({ data: { title: "hi" } })
+    .pipe(afterWrite((row) => publish(row)));
+
+yield *
+  once("create-post-1", () => orm.posts.create({ data: { title: "hi" } }));
+```
+
+`afterWrite` taps successful values only. `once` claims a key with insert-or-ignore; duplicates return `null` unless `ignoreDuplicate: false` (then `IdempotencyConflictError`).

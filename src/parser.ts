@@ -641,9 +641,18 @@ const filesMacro = (config: YamlValue) => {
   return { file, ...attachmentTables } satisfies Record<string, YamlValue>;
 };
 
+const idempotencyMacro = () =>
+  ({
+    paranorm_idempotency: {
+      created_at: "timestamp default=now",
+      key: "id",
+    },
+  }) satisfies Record<string, YamlValue>;
+
 export const builtinMacros: SchemaMacroRegistry = {
   auth: ({ config }) => authMacro(config),
   files: ({ config }) => filesMacro(config),
+  idempotency: () => idempotencyMacro(),
 };
 
 const validateVersion = (document: SchemaDocument): string => {

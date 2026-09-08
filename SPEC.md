@@ -164,6 +164,14 @@ _files:
 
 The macro creates `file` and one `<table>_file` pivot for every attachment target. Pivot `entityId` uses the attached table's ID type. Owned files require the auth macro; `owner: false` removes `file.userId`.
 
+### 5.3 Idempotency
+
+```yaml
+_extends: [idempotency]
+```
+
+Creates `paranorm_idempotency` (`key` primary key + `created_at`) for use with `once()`.
+
 ## 6. Relations and access metadata
 
 Supported relations are:
@@ -191,7 +199,9 @@ type DB2 = InferDatabase<typeof yamlLiteral>;
 
 Inference covers tables, columns, references, defaults, generated IDs, nullability, enums, auth, files, and ParanORM's `Selectable`, `Insertable`, and `Updateable` helpers.
 
-The `schema` tagged template is a dedented runtime authoring helper and may be aliased to `yaml`. TypeScript does not expose tagged-template static segments as literal tuple types, so `InferSchema` inference requires `defineSchema(...)` with a literal or `const` string.
+`defineSchema` / `schema` dedent by dropping leading blank lines, then stripping the indent of the first remaining line from lines that share that prefix. Top-level keys at column 0 do not strip nested column indentation.
+
+The `schema` tagged template is a runtime authoring helper and may be aliased to `yaml`. TypeScript does not expose tagged-template static segments as literal tuple types, so `InferSchema` inference requires `defineSchema(...)` with a literal or `const` string.
 
 ## 8. Query model API
 
@@ -241,17 +251,31 @@ yield * migrator.migrate;
 
 `createMigrator` returns:
 
-- `plan()` — schema operations with destructive flags.
+- `plan()` — schema operations with destructive flags (no SQL compile).
 - `validate()` — validates destructive-change policy.
 - `sql()` — compiled SQL and parameters without applying migrations.
 - `migrate` — Effect that applies pending migrations (no transaction wrapper, so D1 works).
 - `layer` / `loader` — for composing with Effect layers and `Migrator.fromRecord`.
 
-Inputs may be typed schemas, YAML strings, or `{ name, content }`. Names default to `_version`. Low-level `SchemaMigrationProvider` and `applySchemaDiff` remain public.
+Inputs may be typed schemas, YAML strings, or `{ name, content }`. Names default to `_version`. Low-level `SchemaMigrationProvider` and `applySchemaDiff` remain public. Unsupported SQLite in-place alters fail when compiling SQL (`sql()` / `migrate`), not when constructing the migrator.
 
 Migration DDL currently renders SQLite SQL. Pair with SQLite-compatible `SqlClient` drivers; the query API itself accepts any Effect SQL client.
 
-## 10. Diagnostics
+## 10. Write notify and idempotency
+
+```ts
+import { afterWrite, once } from "paranorm";
+
+yield * orm.posts.create({ data }).pipe(afterWrite(publishSnapshot));
+
+yield * once("job-42", () => orm.posts.create({ data }));
+```
+
+- `afterWrite(tap)` — runs after a successful Effect value (skipped on failure).
+- `once(key, fn)` — insert-or-ignore claim; duplicate keys return `null` by default or throw `IdempotencyConflictError` when `ignoreDuplicate: false`.
+- Pair with `_extends: [idempotency]` (or an equivalent table) before using `once`.
+
+## 11. Diagnostics
 
 String schema validation throws `SchemaValidationError` with `sourceName`, line, and column:
 
@@ -261,32 +285,32 @@ cms-schema.yaml:18:3 Invalid schema: entries.author_id references missing column
 
 Migration source names are forwarded into diagnostics. Object-form schemas cannot provide source locations unless the caller retains and supplies their text.
 
-## 11. Dependency ordering and safety
+## 12. Dependency ordering and safety
 
 Tables are created in foreign-key dependency order and removed in reverse order. Cyclic foreign keys are rejected. Indexes and constraints are removed before destructive column operations. Forward destructive migrations require `allowDestructive: true`. Migrations are forward-only.
 
-## 12. Next additions (5–10)
+## 13. Next additions
 
-### 5. Complete dialect hardening
+### Dialect hardening
 
 Add safe SQLite table-rebuild migrations for unsupported `ALTER` operations, and explicit errors for constraint/alter-column cases that SQLite cannot express in place.
 
-### 6. Aggregates and grouping
+### Aggregates and grouping
 
 Add typed `aggregate` and `groupBy` APIs for count, sum, average, minimum, and maximum, including projected aggregate result types.
 
-### 7. Reusable query fragments
+### Reusable query fragments
 
 Allow typed reusable `where`, selection, and ordering fragments that can be shared by `findMany`, `count`, `exists`, and pagination without losing inference.
 
-### 8. Transaction ergonomics
+### Transaction ergonomics
 
 Document and test `sql.withTransaction` with ParanORM Effects on Node SQLite, and note D1 batch semantics as the atomic alternative.
 
-### 9. CLI tooling
+### CLI tooling
 
 Add `paranorm schema check`, `schema format`, `schema diff`, `migrate status`, `migrate sql`, and `migrate latest` commands with machine-readable output.
 
-### 10. Generated declarations and YAML imports
+### Generated declarations and YAML imports
 
 Add code generation and Vite/editor integration so real `.yaml` files can be imported with exact `InferSchema` types, diagnostics, and highlighting without duplicating schema text in TypeScript.

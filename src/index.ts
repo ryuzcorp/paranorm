@@ -40,6 +40,7 @@ export {
   SchemaMigrationProvider,
 } from "./migration-provider.ts";
 export type {
+  ApplySchemaDiffOptions,
   CreateMigratorOptions,
   ParanOrmMigrator,
   MigrationDialect,
@@ -49,4 +50,7 @@ export type {
   SchemaMigrationPlan,
   SchemaMigrationProviderOptions,
 } from "./migration-provider.ts";
+export { afterWrite } from "./notify.ts";
+export { IdempotencyConflictError, once } from "./once.ts";
+export type { OnceOptions } from "./once.ts";
 export type * from "./types.ts";

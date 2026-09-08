@@ -1,8 +1,36 @@
-import dedent from "dedent";
-
 import type { ColumnType, Generated } from "./column-type.ts";
 import { parseSchema } from "./parser.ts";
 import type { AuthoredSchema } from "./types.ts";
+
+/**
+ * Runtime counterpart of `DedentSource`: drop leading newlines, then strip the
+ * indent of the first remaining line from every line that has that prefix.
+ * Unlike package `dedent`, column-0 keys do not strip child indentation.
+ */
+const dedentSchemaSource = (source: string): string => {
+  let content = source;
+  while (content.startsWith("\r\n")) {
+    content = content.slice(2);
+  }
+  while (content.startsWith("\n")) {
+    content = content.slice(1);
+  }
+  let prefix = "";
+  for (const char of content) {
+    if (char === " " || char === "\t") {
+      prefix += char;
+      continue;
+    }
+    break;
+  }
+  if (!prefix) {
+    return content;
+  }
+  return content
+    .split("\n")
+    .map((line) => (line.startsWith(prefix) ? line.slice(prefix.length) : line))
+    .join("\n");
+};
 
 /** JSON values accepted by a `json` column. */
 export type JSONValue =
@@ -384,9 +412,8 @@ export type TypedSchema<Source extends string> = AuthoredSchema & {
 export const defineSchema = <const Source extends string>(
   source: Source
 ): TypedSchema<DedentSource<Source>> => {
-  const dedented = /^(?:\r?\n|[ \t])/u.test(source) ? dedent(source) : source;
-  // SAFETY: dedent preserves the schema source shape; only leading whitespace is removed.
-  const normalized = dedented as DedentSource<Source>;
+  // SAFETY: dedentSchemaSource mirrors DedentSource; only leading blank lines / shared indent are removed.
+  const normalized = dedentSchemaSource(source) as DedentSource<Source>;
   const parsed = Object.assign(parseSchema(normalized), {
     source: normalized,
   });
@@ -416,7 +443,7 @@ export function schema(
   if (values.length) {
     throw new Error("schema tagged templates do not support interpolation");
   }
-  const source = dedent(strings[0] ?? "");
+  const source = dedentSchemaSource(strings[0] ?? "");
   return Object.assign(parseSchema(source), { source });
 }
 
