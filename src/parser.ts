@@ -32,8 +32,10 @@ const REFERENCE_PATTERN =
 const RELATION_PATTERN =
   /^(?<kind>belongs_to|has_many)=(?<table>[A-Za-z_][\w]*)$/u;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/u;
-const YAML_KEY_PATTERN = /^(?<indent>\s*)(?<key>[A-Za-z_][\w]*):/u;
+const YAML_KEY_PATTERN =
+  /^(?<indent>\s*)(?:"(?<qkey>[A-Za-z_][\w]*)"|(?<key>[A-Za-z_][\w]*))\s*:/u;
 const WHITESPACE_PATTERN = /\s/u;
+const PATH_INDEX_PATTERN = /\[\d+\]$/u;
 
 const COLUMN_DATA_TYPES: Partial<Record<ColumnKind, string>> = {
   bigint: "bigint",
@@ -58,13 +60,31 @@ interface TypePatternGroups {
   scale?: string;
 }
 
-interface ParseSchemaOptions {
+export interface ParseSchemaOptions {
   macros?: SchemaMacroRegistry;
+  /** Original YAML/JSON text when `input` is already a parsed object. */
+  sourceText?: string;
   sourceName?: string;
 }
 
-const fail = (message: string): never => {
-  throw new Error(`Invalid schema: ${message}`);
+const SCHEMA_ISSUE_NAME = "SchemaIssue";
+
+interface SchemaIssueFields {
+  path: string;
+}
+
+const isSchemaIssue = (error: Error): error is Error & SchemaIssueFields => {
+  if (error.name !== SCHEMA_ISSUE_NAME || !("path" in error)) {
+    return false;
+  }
+  return String(error.path) === error.path;
+};
+
+const fail = (message: string, path = ""): never => {
+  const error = new Error(`Invalid schema: ${message}`);
+  error.name = SCHEMA_ISSUE_NAME;
+  Object.assign(error, { path } satisfies SchemaIssueFields);
+  throw error;
 };
 
 const isColumnKind = (value: string): value is ColumnKind =>
@@ -92,21 +112,21 @@ export { isYamlMapping };
 
 const expectYamlMapping = (value: YamlValue, at: string): SchemaDocument => {
   if (!isYamlMapping(value)) {
-    return fail(`${at} must be a mapping`);
+    return fail(`${at} must be a mapping`, at);
   }
   return value;
 };
 
 const expectYamlString = (value: YamlValue, at: string): string => {
   if (String(value) !== value) {
-    return fail(`${at} must be a string`);
+    return fail(`${at} must be a string`, at);
   }
   return value;
 };
 
 const expectYamlStringArray = (value: YamlValue, at: string): string[] => {
   if (!Array.isArray(value)) {
-    return fail(`${at} must be an array`);
+    return fail(`${at} must be an array`, at);
   }
   return value.map((item: YamlValue, index: number) =>
     expectYamlString(item, `${at}[${index}]`)
@@ -115,7 +135,7 @@ const expectYamlStringArray = (value: YamlValue, at: string): string[] => {
 
 const expectYamlBoolean = (value: YamlValue, at: string): boolean => {
   if (value !== true && value !== false) {
-    return fail(`${at} must be a boolean`);
+    return fail(`${at} must be a boolean`, at);
   }
   return value;
 };
@@ -131,7 +151,7 @@ const parseSchemaDocumentInput = (
   return expectYamlMapping(parsed, "document");
 };
 
-const tokenize = (input: string): string[] => {
+const tokenize = (input: string, path: string): string[] => {
   const tokens: string[] = [];
   let brackets = 0;
   let current = "";
@@ -170,7 +190,7 @@ const tokenize = (input: string): string[] => {
     }
   }
   if (quote || parens !== 0 || brackets !== 0) {
-    fail(`unbalanced column definition '${input}'`);
+    fail(`unbalanced column definition '${input}'`, path);
   }
   if (current) {
     tokens.push(current);
@@ -249,7 +269,7 @@ const resolveIdColumn = (
 
 const resolveColumnType = (
   groups: TypePatternGroups,
-  name: string
+  path: string
 ): Pick<ColumnDefinition, "dataType" | "generation" | "kind" | "nullable"> => {
   const nullable = Boolean(groups.nullable);
   if (groups.rawType.startsWith("id")) {
@@ -258,7 +278,7 @@ const resolveColumnType = (
   if (groups.rawType.startsWith("decimal")) {
     const { precision, scale } = groups;
     if (!precision || !scale) {
-      fail(`column '${name}' has invalid decimal type`);
+      fail(`invalid decimal type`, path);
     }
     return {
       dataType: `decimal(${precision},${scale})`,
@@ -267,12 +287,12 @@ const resolveColumnType = (
     };
   }
   if (!isColumnKind(groups.rawType)) {
-    return fail(`column '${name}' has unsupported type '${groups.rawType}'`);
+    return fail(`unsupported type '${groups.rawType}'`, path);
   }
   const kind = groups.rawType;
   const dataType = COLUMN_DATA_TYPES[kind];
   if (!dataType) {
-    return fail(`column '${name}' has unsupported type '${kind}'`);
+    return fail(`unsupported type '${kind}'`, path);
   }
   return { dataType, kind, nullable };
 };
@@ -281,14 +301,14 @@ const applyReferentialAction = (
   column: ColumnDefinition,
   key: string,
   value: string,
-  name: string
+  path: string
 ): void => {
   if (!column.references) {
-    return fail(`column '${name}' ${key} must follow references`);
+    return fail(`${key} must follow references`, path);
   }
   const action = value.replaceAll("_", " ");
   if (!isReferentialAction(action)) {
-    return fail(`column '${name}' has invalid ${key} action '${value}'`);
+    return fail(`invalid ${key} action '${value}'`, path);
   }
   if (key === "on_delete") {
     column.references.onDelete = action;
@@ -300,7 +320,7 @@ const applyReferentialAction = (
 const applyEnumToken = (
   column: ColumnDefinition,
   value: string,
-  name: string
+  path: string
 ): void => {
   column.enumValues = value
     .slice(1, -1)
@@ -308,14 +328,14 @@ const applyEnumToken = (
     .map((item) => item.trim())
     .filter(Boolean);
   if (!column.enumValues.length) {
-    fail(`column '${name}' enum must not be empty`);
+    fail(`enum must not be empty`, path);
   }
 };
 
 const applyCompositeUniqueToken = (
   column: ColumnDefinition,
   value: string,
-  name: string
+  path: string
 ): void => {
   column.compositeUnique = value
     .slice(1, -1)
@@ -323,20 +343,20 @@ const applyCompositeUniqueToken = (
     .map((item) => item.trim())
     .filter(Boolean);
   if (column.compositeUnique.length < 2) {
-    fail(`column '${name}' composite unique needs at least two columns`);
+    fail(`composite unique needs at least two columns`, path);
   }
 };
 
 const applyReferencesToken = (
   column: ColumnDefinition,
   value: string,
-  name: string
+  path: string
 ): void => {
   const match = REFERENCE_PATTERN.exec(value);
   const table = match?.groups?.table;
   const refColumn = match?.groups?.column;
   if (!table || !refColumn) {
-    return fail(`column '${name}' has invalid reference '${value}'`);
+    return fail(`invalid reference '${value}'`, path);
   }
   column.references = { column: refColumn, table };
 };
@@ -368,14 +388,14 @@ const applyValueToken = (
   column: ColumnDefinition,
   key: string,
   value: string,
-  name: string
+  path: string
 ): boolean => {
   if (key === "enum" && value.startsWith("[") && value.endsWith("]")) {
-    applyEnumToken(column, value, name);
+    applyEnumToken(column, value, path);
     return true;
   }
   if (key === "unique" && value.startsWith("[") && value.endsWith("]")) {
-    applyCompositeUniqueToken(column, value, name);
+    applyCompositeUniqueToken(column, value, path);
     return true;
   }
   if (key === "default") {
@@ -383,11 +403,11 @@ const applyValueToken = (
     return true;
   }
   if (key === "references") {
-    applyReferencesToken(column, value, name);
+    applyReferencesToken(column, value, path);
     return true;
   }
   if (key === "on_delete" || key === "on_update") {
-    applyReferentialAction(column, key, value, name);
+    applyReferentialAction(column, key, value, path);
     return true;
   }
   return false;
@@ -396,7 +416,7 @@ const applyValueToken = (
 const applyColumnToken = (
   column: ColumnDefinition,
   token: string,
-  name: string
+  path: string
 ): void => {
   const separator = token.indexOf("=");
   const key = separator === -1 ? token : token.slice(0, separator);
@@ -404,18 +424,19 @@ const applyColumnToken = (
   if (applyFlagToken(column, key, value)) {
     return;
   }
-  if (value !== undefined && applyValueToken(column, key, value, name)) {
+  if (value !== undefined && applyValueToken(column, key, value, path)) {
     return;
   }
-  fail(`column '${name}' has unsupported modifier '${token}'`);
+  fail(`unsupported modifier '${token}'`, path);
 };
 
 export const parseColumn = (
   name: string,
-  source: YamlValue
+  source: YamlValue,
+  path: string = name
 ): ColumnDefinition => {
-  const sourceText = expectYamlString(source, `column '${name}'`);
-  const tokens = tokenize(sourceText);
+  const sourceText = expectYamlString(source, path);
+  const tokens = tokenize(sourceText, path);
   const first = tokens.shift() ?? "";
   const inferredReference = first.startsWith("references=");
   if (inferredReference) {
@@ -426,9 +447,9 @@ export const parseColumn = (
     : TYPE_PATTERN.exec(first);
   const groups = typeMatch ? readTypePatternGroups(typeMatch) : undefined;
   if (!groups) {
-    return fail(`column '${name}' has unsupported type in '${sourceText}'`);
+    return fail(`unsupported type in '${sourceText}'`, path);
   }
-  const resolved = resolveColumnType(groups, name);
+  const resolved = resolveColumnType(groups, path);
   const column: ColumnDefinition = {
     dataType: resolved.dataType,
     index: false,
@@ -443,7 +464,7 @@ export const parseColumn = (
     column.generation = resolved.generation;
   }
   for (const token of tokens) {
-    applyColumnToken(column, token, name);
+    applyColumnToken(column, token, path);
   }
   return column;
 };
@@ -459,14 +480,16 @@ const parseAccess = (
   raw: YamlValue,
   table: TableDefinition
 ): AccessDefinition => {
-  const value = expectYamlMapping(raw, `${table.name}._access`);
+  const accessPath = `${table.name}._access`;
+  const value = expectYamlMapping(raw, accessPath);
   const access = defaultAccessDefinition();
   for (const action of ACTIONS) {
     const policy = value[action];
     if (policy !== undefined) {
       if (!isAccessPolicy(policy)) {
         return fail(
-          `${table.name}._access.${action} has invalid policy '${String(policy)}'`
+          `${accessPath}.${action} has invalid policy '${String(policy)}'`,
+          `${accessPath}.${action}`
         );
       }
       access[action] = policy;
@@ -475,10 +498,13 @@ const parseAccess = (
   if (value.owner_column !== undefined) {
     const ownerColumn = expectYamlString(
       value.owner_column,
-      `${table.name}._access.owner_column`
+      `${accessPath}.owner_column`
     );
     if (!table.columns[ownerColumn]) {
-      fail(`${table.name}._access.owner_column must name an existing column`);
+      fail(
+        `${accessPath}.owner_column must name an existing column`,
+        `${accessPath}.owner_column`
+      );
     }
     access.ownerColumn = ownerColumn;
   }
@@ -486,11 +512,11 @@ const parseAccess = (
     ACTIONS.some((action) => access[action] === "owner") &&
     !access.ownerColumn
   ) {
-    fail(`${table.name}._access requires owner_column for owner policy`);
+    fail(`${accessPath} requires owner_column for owner policy`, accessPath);
   }
   for (const key of Object.keys(value)) {
     if (key !== "owner_column" && !isAccessAction(key)) {
-      fail(`${table.name}._access has unknown key '${key}'`);
+      fail(`${accessPath} has unknown key '${key}'`, `${accessPath}.${key}`);
     }
   }
   return access;
@@ -553,11 +579,11 @@ export const builtinMacros: SchemaMacroRegistry = {
 const validateVersion = (document: SchemaDocument): string => {
   const version = document._version;
   if (version === undefined) {
-    return fail("_version must be a semver string");
+    return fail("_version must be a semver string", "_version");
   }
   const versionText = expectYamlString(version, "_version");
   if (!SEMVER_PATTERN.test(versionText)) {
-    fail("_version must be a semver string");
+    fail("_version must be a semver string", "_version");
   }
   return versionText;
 };
@@ -576,11 +602,11 @@ const expandExtensions = (
   for (const name of extensions) {
     const macro = macros[name];
     if (!macro) {
-      return fail(`unknown extension '${name}'`);
+      return fail(`unknown extension '${name}'`, "_extends");
     }
     const config = document[`_${name}`] ?? null;
     if (name === "files" && config === null) {
-      return fail("files extension requires _files config");
+      return fail("files extension requires _files config", "_files");
     }
     Object.assign(expanded, macro({ config }));
   }
@@ -597,7 +623,8 @@ const mergeDocumentTables = (
     }
     if (expanded[key]) {
       fail(
-        `table '${key}' is supplied by an extension and cannot be redefined`
+        `table '${key}' is supplied by an extension and cannot be redefined`,
+        key
       );
     }
     expanded[key] = value;
@@ -616,17 +643,19 @@ const collectUniqueConstraints = (
     if (!column.compositeUnique) {
       continue;
     }
+    const columnPath = `${name}.${column.name}`;
     const local: string[] = column.compositeUnique.map((qualified) => {
       const [owner, field] = qualified.split(".");
       if (owner !== name || !field || !columns[field]) {
         return fail(
-          `${name}.${column.name} has invalid composite unique member '${qualified}'`
+          `${columnPath} has invalid composite unique member '${qualified}'`,
+          columnPath
         );
       }
       return field;
     });
     if (!local.includes(column.name)) {
-      fail(`${name}.${column.name} composite unique must include itself`);
+      fail(`${columnPath} composite unique must include itself`, columnPath);
     }
     if (
       !uniqueConstraints.some(
@@ -647,7 +676,11 @@ const buildTableColumns = (
   const columns: TableDefinition["columns"] = {};
   for (const [columnName, definition] of Object.entries(value)) {
     if (!columnName.startsWith("_")) {
-      columns[columnName] = parseColumn(columnName, definition);
+      columns[columnName] = parseColumn(
+        columnName,
+        definition,
+        `${name}.${columnName}`
+      );
     }
   }
   return columns;
@@ -673,20 +706,19 @@ const parseRelationDefinition = (
   definition: YamlValue,
   tables: Record<string, TableDefinition>
 ): RelationDefinition => {
-  const relationSource = expectYamlString(
-    definition,
-    `${name}._relations.${relationName}`
-  );
+  const relationPath = `${name}._relations.${relationName}`;
+  const relationSource = expectYamlString(definition, relationPath);
   const match = RELATION_PATTERN.exec(relationSource);
   const kindText = match?.groups?.kind;
   const targetTable = match?.groups?.table;
   if (!kindText || !targetTable || !tables[targetTable]) {
     return fail(
-      `${name}._relations.${relationName} is invalid or targets an unknown table`
+      `${relationPath} is invalid or targets an unknown table`,
+      relationPath
     );
   }
   if (!isRelationKind(kindText)) {
-    return fail(`${name}._relations.${relationName} has invalid relation kind`);
+    return fail(`${relationPath} has invalid relation kind`, relationPath);
   }
   const relation: RelationDefinition = {
     kind: kindText,
@@ -705,18 +737,21 @@ const assignBelongsToColumn = (
   if (relation.kind !== "belongs_to") {
     return;
   }
+  const relationPath = `${name}._relations.${relationName}`;
   const matches = Object.values(table.columns).filter(
     (column) => column.references?.table === relation.table
   );
   if (matches.length !== 1) {
     fail(
-      `${name}._relations.${relationName} requires exactly one foreign key to '${relation.table}'`
+      `${relationPath} requires exactly one foreign key to '${relation.table}'`,
+      relationPath
     );
   }
   const [match] = matches;
   if (!match) {
     return fail(
-      `${name}._relations.${relationName} requires exactly one foreign key to '${relation.table}'`
+      `${relationPath} requires exactly one foreign key to '${relation.table}'`,
+      relationPath
     );
   }
   relation.column = match.name;
@@ -730,7 +765,7 @@ const parseTableRelations = (
     const value = expectYamlMapping(raw, name);
     const table = tables[name];
     if (!table) {
-      fail(`table '${name}' was not built`);
+      fail(`table '${name}' was not built`, name);
       return;
     }
     if (value._relations !== undefined) {
@@ -763,11 +798,13 @@ const validateColumnReferences = (
       if (!column.references) {
         continue;
       }
+      const columnPath = `${table.name}.${column.name}`;
       const targetTable = tables[column.references.table];
       const targetColumn = targetTable?.columns[column.references.column];
       if (!targetTable || !targetColumn) {
         fail(
-          `${table.name}.${column.name} references missing column '${column.references.table}.${column.references.column}'`
+          `${columnPath} references missing column '${column.references.table}.${column.references.column}'`,
+          columnPath
         );
         continue;
       }
@@ -788,10 +825,12 @@ const validateHasManyRelations = (
       if (relation.kind !== "has_many") {
         continue;
       }
+      const relationPath = `${table.name}._relations.${relation.name}`;
       const target = tables[relation.table];
       if (!target) {
         fail(
-          `${table.name}._relations.${relation.name} targets unknown table '${relation.table}'`
+          `${relationPath} targets unknown table '${relation.table}'`,
+          relationPath
         );
         continue;
       }
@@ -801,7 +840,8 @@ const validateHasManyRelations = (
       );
       if (!reverse) {
         fail(
-          `${table.name}._relations.${relation.name} has no reverse belongs_to on '${relation.table}'`
+          `${relationPath} has no reverse belongs_to on '${relation.table}'`,
+          relationPath
         );
       }
     }
@@ -868,37 +908,77 @@ const parseSchemaDocument = (
   };
 };
 
+export interface SchemaValidationErrorOptions {
+  cause?: unknown;
+  column?: number;
+  line?: number;
+  path?: string;
+  sourceName?: string;
+}
+
 export class SchemaValidationError extends Error {
-  readonly column: number;
-  readonly line: number;
+  readonly column?: number;
+  readonly line?: number;
+  readonly path: string;
   readonly sourceName: string;
 
-  constructor(
-    message: string,
-    line: number,
-    column: number,
-    sourceName = "schema",
-    options?: ErrorOptions
-  ) {
-    super(`${sourceName}:${line}:${column} ${message}`, options);
+  constructor(message: string, options: SchemaValidationErrorOptions = {}) {
+    const sourceName = options.sourceName ?? "schema";
+    const path = options.path ?? "";
+    const { line, column } = options;
+    const hasLocation = line !== undefined && column !== undefined;
+    let location = sourceName;
+    if (hasLocation) {
+      location = `${sourceName}:${line}:${column}`;
+    } else if (path) {
+      location = `${sourceName}:${path}`;
+    }
+    super(`${location} ${message}`, {
+      cause: options.cause,
+    });
     this.name = "SchemaValidationError";
-    this.line = line;
-    this.column = column;
+    this.path = path;
     this.sourceName = sourceName;
+    if (hasLocation) {
+      this.line = line;
+      this.column = column;
+    }
   }
 }
 
+const pathLookupCandidates = (path: string): string[] => {
+  const candidates: string[] = [];
+  let current = path;
+  while (current) {
+    candidates.push(current);
+    if (PATH_INDEX_PATTERN.test(current)) {
+      current = current.replace(PATH_INDEX_PATTERN, "");
+      continue;
+    }
+    const separator = current.lastIndexOf(".");
+    if (separator === -1) {
+      break;
+    }
+    current = current.slice(0, separator);
+  }
+  return candidates;
+};
+
 const locateSchemaError = (
   source: string,
-  message: string
-): { column: number; line: number } => {
+  path: string
+): { column: number; line: number } | undefined => {
+  if (!path) {
+    return undefined;
+  }
+  const candidates = new Set(pathLookupCandidates(path));
   const stack: { indent: number; key: string }[] = [];
   let best: { column: number; line: number; score: number } | undefined;
   for (const [index, line] of source.split("\n").entries()) {
     const match = YAML_KEY_PATTERN.exec(line);
     const indentText = match?.groups?.indent;
-    const key = match?.groups?.key;
-    if (!indentText || !key) {
+    const key = match?.groups?.qkey ?? match?.groups?.key;
+    if (indentText === undefined || !key) {
       continue;
     }
     const indent = indentText.replaceAll("\t", "  ").length;
@@ -909,42 +989,54 @@ const locateSchemaError = (
       }
       stack.pop();
     }
-    const path = [...stack.map((entry) => entry.key), key].join(".");
-    let score = -1;
-    if (message.includes(path)) {
-      score = path.length + 100;
-    } else if (message.includes(key)) {
-      score = key.length;
-    }
-    if (score > (best?.score ?? -1)) {
-      best = { column: indentText.length + 1, line: index + 1, score };
+    const keyPath = [...stack.map((entry) => entry.key), key].join(".");
+    if (candidates.has(keyPath)) {
+      const score = keyPath.length;
+      if (score > (best?.score ?? -1)) {
+        best = { column: indentText.length + 1, line: index + 1, score };
+      }
     }
     stack.push({ indent, key });
   }
-  return best ?? { column: 1, line: 1 };
+  return best ? { column: best.column, line: best.line } : undefined;
+};
+
+const wrapSchemaError = (
+  error: Error,
+  options: ParseSchemaOptions,
+  sourceText?: string
+): SchemaValidationError => {
+  if (error instanceof SchemaValidationError) {
+    return error;
+  }
+  const path = isSchemaIssue(error) ? error.path : "";
+  const location =
+    sourceText === undefined ? undefined : locateSchemaError(sourceText, path);
+  const details: SchemaValidationErrorOptions = {
+    cause: error,
+    path,
+  };
+  if (location !== undefined) {
+    details.column = location.column;
+    details.line = location.line;
+  }
+  if (options.sourceName !== undefined) {
+    details.sourceName = options.sourceName;
+  }
+  return new SchemaValidationError(error.message, details);
 };
 
 export const parseSchema = (
   input: string | SchemaDocument,
   options: ParseSchemaOptions = {}
 ): AuthoredSchema => {
-  if (isYamlMapping(input)) {
-    return parseSchemaDocument(input, options);
-  }
+  const sourceText = isYamlMapping(input) ? options.sourceText : input;
   try {
     return parseSchemaDocument(input, options);
   } catch (error) {
-    if (error instanceof SchemaValidationError) {
-      throw error;
+    if (error instanceof Error) {
+      throw wrapSchemaError(error, options, sourceText);
     }
-    const message = error instanceof Error ? error.message : String(error);
-    const location = locateSchemaError(input, message);
-    throw new SchemaValidationError(
-      message,
-      location.line,
-      location.column,
-      options.sourceName,
-      { cause: error }
-    );
+    throw wrapSchemaError(new Error(String(error)), options, sourceText);
   }
 };

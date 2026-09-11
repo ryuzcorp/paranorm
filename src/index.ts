@@ -32,6 +32,10 @@ export {
   parseSchema,
   SchemaValidationError,
 } from "./parser.ts";
+export type {
+  ParseSchemaOptions,
+  SchemaValidationErrorOptions,
+} from "./parser.ts";
 export { columnChanged, diffSchemas, isDestructiveDiff } from "./diff.ts";
 export {
   applySchemaDiff,

@@ -224,6 +224,14 @@ function loadSchema() {
 
 The tag dedents leading blank lines and the indent of the first remaining line (same rules as `defineSchema`). Interpolations are rejected. TypeScript does not expose tagged-template text as a string-literal type, so use `defineSchema(yamlLiteral)` when compile-time inference is needed.
 
+### Schema diagnostics
+
+`parseSchema` / `defineSchema` throw `SchemaValidationError` with a dotted `path`. YAML and JSON strings also get `line` / `column`. Object input can pass `sourceText` (and `sourceName`) to recover locations:
+
+```ts
+parseSchema(JSON.parse(text), { sourceName: "app.json", sourceText: text });
+```
+
 See [SPEC.md](./SPEC.md) for the complete authoring format and [DOCS.md](./DOCS.md) for recipes (including Better Auth).
 
 ## Schema migrations

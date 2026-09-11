@@ -265,13 +265,21 @@ yield * once("job-42", () => orm.posts.create({ data }));
 
 ## 11. Diagnostics
 
-String schema validation throws `SchemaValidationError` with `sourceName`, line, and column:
+Schema validation always throws `SchemaValidationError` with a dotted `path` (`entries.author_id`, `_version`, `entries._access.owner_column`, …).
+
+When the input is a YAML or JSON string (or object input with `sourceText`), the error also includes `line` and `column`:
 
 ```text
 cms-schema.yaml:18:3 Invalid schema: entries.author_id references missing column 'users.id'
 ```
 
-Migration source names are forwarded into diagnostics. Object-form schemas cannot provide source locations unless the caller retains and supplies their text.
+Object-form input without `sourceText` reports the path instead of a fake location:
+
+```text
+schema:entries.author_id Invalid schema: entries.author_id references missing column 'users.id'
+```
+
+Migration source names are forwarded into diagnostics via `sourceName`.
 
 ## 12. Dependency ordering and safety
 

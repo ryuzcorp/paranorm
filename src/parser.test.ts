@@ -293,7 +293,119 @@ posts:
       throw new Error("expected throw");
     } catch (error) {
       expect(error).toBeInstanceOf(SchemaValidationError);
-      expect(String(error)).toContain("app.yaml:");
+      if (!(error instanceof SchemaValidationError)) {
+        throw error;
+      }
+      expect(error.path).toBe("things.bad");
+      expect(error.line).toBe(4);
+      expect(error.column).toBe(3);
+      expect(String(error)).toContain("app.yaml:4:3");
+    }
+  });
+
+  test("reports path for object-form schema errors", () => {
+    try {
+      parseSchema(
+        {
+          _version: "1.0.0",
+          entries: {
+            author_id: "references=missing.id",
+            id: "id",
+          },
+        },
+        { sourceName: "app.json" }
+      );
+      throw new Error("expected throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(SchemaValidationError);
+      if (!(error instanceof SchemaValidationError)) {
+        throw error;
+      }
+      expect(error.path).toBe("entries.author_id");
+      expect(error.line).toBeUndefined();
+      expect(error.column).toBeUndefined();
+      expect(String(error)).toContain("app.json:entries.author_id");
+    }
+  });
+
+  test("recovers locations from sourceText on object input", () => {
+    const sourceText = `{
+  "_version": "1.0.0",
+  "entries": {
+    "id": "id",
+    "author_id": "references=missing.id"
+  }
+}`;
+    try {
+      parseSchema(
+        {
+          _version: "1.0.0",
+          entries: {
+            author_id: "references=missing.id",
+            id: "id",
+          },
+        },
+        {
+          sourceName: "app.json",
+          sourceText,
+        }
+      );
+      throw new Error("expected throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(SchemaValidationError);
+      if (!(error instanceof SchemaValidationError)) {
+        throw error;
+      }
+      expect(error.path).toBe("entries.author_id");
+      expect(error.line).toBe(5);
+      expect(String(error)).toContain("app.json:5:");
+    }
+  });
+
+  test("locates JSON string schema errors by path", () => {
+    const sourceText = `{
+  "_version": "1.0.0",
+  "entries": {
+    "id": "id",
+    "author_id": "references=missing.id"
+  }
+}`;
+    try {
+      parseSchema(sourceText, { sourceName: "app.json" });
+      throw new Error("expected throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(SchemaValidationError);
+      if (!(error instanceof SchemaValidationError)) {
+        throw error;
+      }
+      expect(error.path).toBe("entries.author_id");
+      expect(error.line).toBe(5);
+      expect(String(error)).toContain("app.json:5:");
+    }
+  });
+
+  test("prefers exact path over shorter key matches", () => {
+    try {
+      parseSchema(
+        `_version: "1.0.0"
+users:
+  id: id
+posts:
+  id: id
+  user_id: references=users.id
+  author_id: references=missing.id
+`,
+        { sourceName: "cms.yaml" }
+      );
+      throw new Error("expected throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(SchemaValidationError);
+      if (!(error instanceof SchemaValidationError)) {
+        throw error;
+      }
+      expect(error.path).toBe("posts.author_id");
+      expect(error.line).toBe(7);
+      expect(String(error)).toContain("cms.yaml:7:3");
     }
   });
 });
