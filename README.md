@@ -81,7 +81,7 @@ program.pipe(
 );
 ```
 
-`paranorm<DB>()` creates models lazily through a proxy. Methods return Effects that require `SqlClient` from `effect/unstable/sql` — never a concrete driver type.
+`paranorm<DB>()` creates models lazily through a proxy. Methods return Effects that require `SqlClient` from `effect/sql` — never a concrete driver type.
 
 ## Query API
 

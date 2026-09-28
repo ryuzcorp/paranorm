@@ -8,7 +8,7 @@ ParanORM is an Effect SQL toolkit with three connected surfaces:
 2. A typed model API over Effect `SqlClient` (any `@effect/sql-*` driver).
 3. A forward-only schema-diff migrator that emits SQL as Effects.
 
-ParanORM is not a SQL driver. Consumers provide any layer that implements `SqlClient` from `effect/unstable/sql`.
+ParanORM is not a SQL driver. Consumers provide any layer that implements `SqlClient` from `effect/sql`.
 
 ## 2. Canonical usage
 
@@ -197,7 +197,7 @@ One `defineSchema` literal is enough for Better Auth–scale YAML (the [DOCS.md]
 const orm = paranorm<DB>();
 ```
 
-`paranorm` creates a lazy proxy of models. Each method returns an Effect requiring `SqlClient` from `effect/unstable/sql`.
+`paranorm` creates a lazy proxy of models. Each method returns an Effect requiring `SqlClient` from `effect/sql`.
 
 Each model provides:
 

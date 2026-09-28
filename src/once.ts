@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
-import { SqlClient } from "effect/unstable/sql/SqlClient";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import { SqlClient } from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
 
 export class IdempotencyConflictError extends Error {
   override name = "IdempotencyConflictError";

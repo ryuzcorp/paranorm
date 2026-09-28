@@ -1,6 +1,6 @@
 {
   "name": "paranorm",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "YAML schema inference, migrations, and a typed model API for Effect SQL.",
   "keywords": [
     "database",
@@ -46,10 +46,10 @@
   },
   "dependencies": {
     "confbox": "^0.2.4",
-    "effect": "^4.0.0-rc.112"
+    "effect": "^4.0.0-rc.118"
   },
   "devDependencies": {
-    "@effect/sql-sqlite-node": "^4.0.0-rc.112",
+    "@effect/sql-sqlite-node": "^4.0.0-rc.118",
     "@tsconfig/strictest": "^2.0.8",
     "@types/bun": "latest",
     "@types/node": "^26.2.0",
@@ -61,7 +61,7 @@
     "ultracite": "7.10.8"
   },
   "peerDependencies": {
-    "effect": "^4.0.0-rc.112"
+    "effect": "^4.0.0-rc.118"
   },
   "packageManager": "bun@1.4.0"
 }

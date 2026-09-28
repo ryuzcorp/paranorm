@@ -6,7 +6,7 @@ import path from "node:path";
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import type { Layer } from "effect";
 import { Effect } from "effect";
-import type { SqlClient } from "effect/unstable/sql/SqlClient";
+import type { SqlClient } from "effect/sql/SqlClient";
 
 import { paranorm, ParanOrmError } from "./index.ts";
 import type { Generated } from "./index.ts";

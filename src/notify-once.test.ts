@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import type { Layer } from "effect";
 import { Effect } from "effect";
-import type { SqlClient } from "effect/unstable/sql/SqlClient";
+import type { SqlClient } from "effect/sql/SqlClient";
 
 import { afterWrite } from "./notify.ts";
 import { IdempotencyConflictError, once } from "./once.ts";

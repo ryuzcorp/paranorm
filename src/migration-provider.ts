@@ -1,8 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Migrator from "effect/unstable/sql/Migrator";
-import { SqlClient } from "effect/unstable/sql/SqlClient";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import * as Migrator from "effect/sql/Migrator";
+import { SqlClient } from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
 
 import { diffSchemas, isDestructiveDiff } from "./diff.ts";
 import { isYamlMapping, parseSchema } from "./parser.ts";
